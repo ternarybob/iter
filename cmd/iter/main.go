@@ -62,18 +62,18 @@ type Verdict struct {
 
 // HookResponse is the JSON output format for Claude Code hooks.
 type HookResponse struct {
-	Continue           bool               `json:"continue"`
-	SuppressOutput     bool               `json:"suppressOutput,omitempty"`
-	SystemMessage      string             `json:"systemMessage,omitempty"`
+	Continue           bool                `json:"continue"`
+	SuppressOutput     bool                `json:"suppressOutput,omitempty"`
+	SystemMessage      string              `json:"systemMessage,omitempty"`
 	HookSpecificOutput *HookSpecificOutput `json:"hookSpecificOutput,omitempty"`
 }
 
 // HookSpecificOutput provides hook-specific control.
 type HookSpecificOutput struct {
-	HookEventName     string            `json:"hookEventName,omitempty"`
-	PermissionDecision string           `json:"permissionDecision,omitempty"`
-	AdditionalContext string            `json:"additionalContext,omitempty"`
-	UpdatedInput      map[string]any    `json:"updatedInput,omitempty"`
+	HookEventName      string         `json:"hookEventName,omitempty"`
+	PermissionDecision string         `json:"permissionDecision,omitempty"`
+	AdditionalContext  string         `json:"additionalContext,omitempty"`
+	UpdatedInput       map[string]any `json:"updatedInput,omitempty"`
 }
 
 func main() {
@@ -601,16 +601,16 @@ func cmdHookStop(args []string) error {
 	// Check completion conditions
 	if state.Completed {
 		resp := HookResponse{
-			Continue:       true,
-			SystemMessage:  "Iter session completed successfully.",
+			Continue:      true,
+			SystemMessage: "Iter session completed successfully.",
 		}
 		return outputJSON(resp)
 	}
 
 	if state.Iteration >= state.MaxIterations {
 		resp := HookResponse{
-			Continue:       true,
-			SystemMessage:  fmt.Sprintf("Iter session reached max iterations (%d).", state.MaxIterations),
+			Continue:      true,
+			SystemMessage: fmt.Sprintf("Iter session reached max iterations (%d).", state.MaxIterations),
 		}
 		return outputJSON(resp)
 	}
