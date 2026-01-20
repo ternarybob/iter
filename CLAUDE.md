@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build Commands
 
 ```bash
-./scripts/install.sh              # Build and install plugin from source
+./scripts/build.sh                # Build plugin binary from source
 go build -o bin/iter ./cmd/iter   # Build CLI binary only
 go test ./cmd/iter/...            # Run tests
 golangci-lint run                 # Lint

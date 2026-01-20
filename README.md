@@ -19,8 +19,8 @@ It provides a rigorous Architect → Worker → Validator feedback cycle for com
 git clone https://github.com/ternarybob/iter.git
 cd iter
 
-# Install the plugin (builds binary from source)
-./scripts/install.sh
+# Build the plugin binary
+./scripts/build.sh
 
 # Use with Claude Code
 claude --plugin-dir /path/to/iter
@@ -126,7 +126,7 @@ github.com/ternarybob/iter/
 ├── bin/
 │   └── iter                # Compiled binary
 └── scripts/
-    └── install.sh          # Build and install script
+    └── build.sh            # Build script
 ```
 
 ## Development
@@ -134,8 +134,8 @@ github.com/ternarybob/iter/
 ### Building
 
 ```bash
-# Build and install
-./scripts/install.sh
+# Build the binary
+./scripts/build.sh
 
 # Or build manually
 go build -o bin/iter ./cmd/iter

@@ -1,15 +1,14 @@
 #!/bin/bash
-# Install iter plugin from source
+# Build iter plugin from source
 #
-# This script builds the iter binary and sets up the plugin
-# in the local project directory.
+# This script builds the iter binary for the plugin.
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-echo "Installing iter plugin..."
+echo "Building iter plugin..."
 echo "Project directory: $PROJECT_DIR"
 
 # Check Go is installed
@@ -31,8 +30,11 @@ fi
 
 echo "Found Go version: $GO_VERSION"
 
-# Create bin directory
+# Create bin directory structure
 mkdir -p "$PROJECT_DIR/bin"
+mkdir -p "$PROJECT_DIR/bin/commands"
+mkdir -p "$PROJECT_DIR/bin/hooks"
+mkdir -p "$PROJECT_DIR/bin/plugin-skills"
 
 # Download dependencies
 echo "Downloading dependencies..."
@@ -52,20 +54,39 @@ fi
 # Make binary executable
 chmod +x "$PROJECT_DIR/bin/iter"
 
+# Copy plugin manifest
+echo "Copying plugin files..."
+cp "$PROJECT_DIR/.claude-plugin/plugin.json" "$PROJECT_DIR/bin/plugin.json"
+
+# Copy commands
+cp "$PROJECT_DIR/commands/"*.md "$PROJECT_DIR/bin/commands/"
+
+# Copy plugin-skills
+if [ -d "$PROJECT_DIR/plugin-skills" ] && ls "$PROJECT_DIR/plugin-skills/"*.md 1>/dev/null 2>&1; then
+    cp "$PROJECT_DIR/plugin-skills/"*.md "$PROJECT_DIR/bin/plugin-skills/"
+fi
+
+# Copy hooks and adjust binary path (bin/ is now the plugin root, so iter is at root)
+sed 's|\${CLAUDE_PLUGIN_ROOT}/bin/iter|\${CLAUDE_PLUGIN_ROOT}/iter|g' \
+    "$PROJECT_DIR/hooks/hooks.json" > "$PROJECT_DIR/bin/hooks/hooks.json"
+
 # Verify the binary works
-echo "Verifying installation..."
+echo "Verifying build..."
 "$PROJECT_DIR/bin/iter" help > /dev/null 2>&1 || {
     echo "Error: iter binary failed to run"
     exit 1
 }
 
 echo ""
-echo "Installation complete!"
+echo "Build complete!"
 echo ""
-echo "Binary installed to: $PROJECT_DIR/bin/iter"
+echo "Plugin built at: $PROJECT_DIR/bin/"
+echo ""
+echo "Contents:"
+ls -la "$PROJECT_DIR/bin/"
 echo ""
 echo "To use the iter plugin with Claude Code:"
-echo "  claude --plugin-dir $PROJECT_DIR"
+echo "  claude --plugin-dir $PROJECT_DIR/bin"
 echo ""
 echo "Or add to your claude config:"
-echo "  {\"pluginDirs\": [\"$PROJECT_DIR\"]}"
+echo "  {\"pluginDirs\": [\"$PROJECT_DIR/bin\"]}"
