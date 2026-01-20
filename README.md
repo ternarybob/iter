@@ -16,8 +16,85 @@ Unlike CLI wrappers, Iter is designed as an embeddable library with a plugin arc
 
 ## Installation
 
+### Prerequisites
+
+- **Go 1.22+** - [Download Go](https://go.dev/dl/)
+- **Anthropic API Key** - Get one at [console.anthropic.com](https://console.anthropic.com/)
+- (Optional) **Ollama** - For local model support: [ollama.ai](https://ollama.ai/)
+
+### Install as a Dependency
+
+Add Iter to your Go project:
+
 ```bash
 go get github.com/ternarybob/iter
+```
+
+### Build from Source
+
+Clone the repository and build:
+
+```bash
+# Clone the repository
+git clone https://github.com/ternarybob/iter.git
+cd iter
+
+# Download dependencies
+go mod download
+
+# Build
+go build ./...
+
+# Run tests
+go test ./...
+
+# Run tests with race detection
+go test -race ./...
+```
+
+### Verify Installation
+
+```bash
+# Check that the module builds correctly
+go build ./...
+
+# Run the test suite
+go test ./...
+```
+
+Expected output:
+```
+ok  	github.com/ternarybob/iter/pkg/agent
+ok  	github.com/ternarybob/iter/pkg/config
+ok  	github.com/ternarybob/iter/pkg/index
+ok  	github.com/ternarybob/iter/pkg/llm
+ok  	github.com/ternarybob/iter/pkg/orchestra
+ok  	github.com/ternarybob/iter/pkg/sdk
+ok  	github.com/ternarybob/iter/pkg/session
+ok  	github.com/ternarybob/iter/skills
+```
+
+### Environment Setup
+
+Set your API key as an environment variable:
+
+```bash
+# For Anthropic Claude
+export ANTHROPIC_API_KEY="your-api-key-here"
+
+# Or add to your shell profile (~/.bashrc, ~/.zshrc, etc.)
+echo 'export ANTHROPIC_API_KEY="your-api-key-here"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+For Ollama (local models), ensure the Ollama server is running:
+
+```bash
+# Start Ollama server
+ollama serve
+
+# Pull a model (e.g., llama2)
+ollama pull llama2
 ```
 
 ## Quick Start
@@ -202,15 +279,105 @@ Prevents infinite loops by detecting:
 - Repeated errors
 - Output decline
 
+## Project Structure
+
+```
+github.com/ternarybob/iter/
+├── iter.go                 # Main entry point and convenience functions
+├── pkg/
+│   ├── sdk/                # Public SDK interfaces (Skill, Task, Result, etc.)
+│   ├── agent/              # Core agent implementation and loop controller
+│   ├── orchestra/          # Multi-agent orchestration (Architect, Worker, Validator)
+│   ├── llm/                # LLM provider abstraction (Anthropic, Ollama)
+│   ├── index/              # Codebase indexing and semantic search
+│   ├── config/             # Configuration loading (.claude directory)
+│   ├── session/            # Session and conversation management
+│   └── monitor/            # Live monitoring with SSE streaming
+├── skills/                 # Default skills
+│   ├── codemod/            # Code modification skill
+│   ├── test/               # Test generation skill
+│   ├── review/             # Code review skill
+│   ├── patch/              # Patch application skill
+│   ├── devops/             # DevOps skill (Docker, K8s, CI/CD)
+│   └── docs/               # Documentation skill
+└── internal/               # Private utilities
+```
+
 ## API Reference
 
 See the [pkg.go.dev documentation](https://pkg.go.dev/github.com/ternarybob/iter).
 
-## Requirements
+## Development
 
-- Go 1.22+
-- SQLite (bundled with pure-Go driver)
-- Anthropic API key (or Ollama for local models)
+### Running Tests
+
+```bash
+# Run all tests
+go test ./...
+
+# Run tests with verbose output
+go test -v ./...
+
+# Run tests with race detection
+go test -race ./...
+
+# Run tests for a specific package
+go test ./pkg/agent/...
+
+# Run a specific test
+go test -run TestCircuitBreaker ./pkg/agent/
+```
+
+### Linting
+
+```bash
+# Install golangci-lint
+go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+
+# Run linter
+golangci-lint run
+```
+
+### Building
+
+```bash
+# Build all packages
+go build ./...
+
+# Build with optimizations disabled (for debugging)
+go build -gcflags="all=-N -l" ./...
+```
+
+## Troubleshooting
+
+### Common Issues
+
+**"ANTHROPIC_API_KEY not set"**
+```bash
+export ANTHROPIC_API_KEY="your-api-key-here"
+```
+
+**"connection refused" with Ollama**
+```bash
+# Ensure Ollama is running
+ollama serve
+```
+
+**Build errors with missing dependencies**
+```bash
+go mod tidy
+go mod download
+```
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Make your changes
+4. Run tests (`go test ./...`)
+5. Commit your changes (`git commit -m 'Add amazing feature'`)
+6. Push to the branch (`git push origin feature/amazing-feature`)
+7. Open a Pull Request
 
 ## License
 
