@@ -1,20 +1,56 @@
-# Iter - Implementation Guide
+# Iter - Claude Code Plugin
+
+Iter is a **Claude Code plugin** that implements an adversarial multi-agent DevOps loop.
+It runs within Claude Code using hooks and slash commands, with a Go binary for state management.
+
+## Quick Start
+
+```bash
+# Build the CLI binary
+go build -o bin/iter ./cmd/iter
+
+# Install the plugin (from plugin directory)
+claude --plugin-dir /path/to/iter
+
+# Start an iter loop
+/iter-loop "Add a health check endpoint to the API"
+```
 
 ## Build Commands
 
 ```bash
-go build ./...
-go test ./...
-go test -race ./...
-golangci-lint run
+go build -o bin/iter ./cmd/iter   # Build the CLI
+go build ./...                     # Build all packages
+go test ./...                      # Run tests
+go test -race ./...                # Race detection
+golangci-lint run                  # Lint
 ```
 
 ## Project Structure
 
 ```
 github.com/ternarybob/iter/
-├── iter.go                 # Main entry point
-├── pkg/
+├── .claude-plugin/
+│   └── plugin.json         # Plugin manifest
+├── commands/               # Slash commands
+│   ├── iter-loop.md        # Start adversarial loop
+│   ├── iter-analyze.md     # Run architect analysis
+│   ├── iter-validate.md    # Run validator review
+│   ├── iter-step.md        # Get step instructions
+│   ├── iter-status.md      # Show session status
+│   ├── iter-next.md        # Move to next step
+│   ├── iter-complete.md    # Mark complete
+│   └── iter-reset.md       # Reset session
+├── hooks/
+│   └── hooks.json          # Stop hook configuration
+├── plugin-skills/
+│   └── adversarial-devops.md  # Skill definition
+├── cmd/
+│   └── iter/
+│       └── main.go         # CLI entry point
+├── bin/
+│   └── iter                # Compiled binary (build output)
+├── pkg/                    # Go packages (library code)
 │   ├── sdk/                # Public SDK interfaces
 │   ├── agent/              # Core agent implementation
 │   ├── orchestra/          # Multi-agent orchestration
@@ -22,83 +58,72 @@ github.com/ternarybob/iter/
 │   ├── index/              # Codebase indexing
 │   ├── config/             # Configuration
 │   ├── session/            # Session management
-│   ├── monitor/            # Live monitoring
-│   └── safety/             # Safety controls
-├── skills/                 # Default skills
-│   ├── codemod/
-│   ├── test/
-│   ├── review/
-│   ├── patch/
-│   ├── devops/
-│   └── docs/
+│   └── monitor/            # Live monitoring
+├── skills/                 # Go skill implementations
 └── internal/               # Private utilities
 ```
 
-## Architecture Rules
+## Plugin Commands
 
-### Package Dependencies (import order)
-- `pkg/sdk`: No internal dependencies (pure interfaces)
-- `pkg/agent`: Depends on sdk, llm, index, config, safety, orchestra
-- `pkg/orchestra`: Depends on sdk, llm
-- `pkg/llm`: Depends on sdk (for types only)
-- `pkg/index`: No pkg dependencies
-- `pkg/config`: No pkg dependencies
-- `pkg/safety`: No pkg dependencies
-- `pkg/monitor`: Depends on sdk (for events)
-- `skills/`: Depends on pkg/sdk only
+| Command | Description |
+|---------|-------------|
+| `/iter-loop "<task>"` | Start an adversarial multi-agent loop |
+| `/iter-analyze` | Run architect analysis |
+| `/iter-validate` | Run validator review |
+| `/iter-step [N]` | Get step instructions |
+| `/iter-status` | Show session status |
+| `/iter-next` | Move to next step |
+| `/iter-complete` | Mark session complete |
+| `/iter-reset` | Reset session |
 
-### Code Style
-- Use slog for structured logging
-- Wrap errors with context: `fmt.Errorf("context: %w", err)`
-- Use functional options for configuration
-- Interfaces in consumer packages, implementations in provider packages
-- No package-level state (except registries with sync.Mutex)
-
-### Testing
-- Table-driven tests preferred
-- Use testify/assert and testify/require
-- Mock external dependencies
-- No network calls in unit tests
-
-### Forbidden
-- `fmt.Println` (use logger)
-- `log.*` (use slog)
-- Ignoring errors with `_`
-- Global mutable state
-- `import "."`
-- Circular dependencies
-
-## Multi-Agent Implementation
+## Multi-Agent Architecture
 
 ### Architect Agent
-- Uses planning model (higher reasoning)
+- Analyzes requirements thoroughly
+- Creates detailed step documents
+- Identifies cleanup targets
 - Outputs: `requirements.md`, `step_N.md`, `architect-analysis.md`
-- Must analyze existing patterns before planning
-- Must identify cleanup targets
-- Must specify dependencies between steps
 
-### Worker Agent
-- Uses execution model (faster, cheaper)
-- Follows step docs EXACTLY - no interpretation
-- Must verify build passes (output to log file)
-- Must perform cleanup specified in step doc
+### Worker Agent (Claude Code)
+- Implements steps EXACTLY as specified
+- No interpretation or deviation
+- Verifies build after each change
 - Writes `step_N_impl.md` after implementation
 
 ### Validator Agent
-- Uses validation model (higher reasoning)
-- DEFAULT STANCE: **REJECT**
-- Must verify requirements with code line references
-- Must verify cleanup completed
+- **DEFAULT STANCE: REJECT**
+- Must find problems, not confirm success
 - Auto-reject on build failure
 - Auto-reject on missing requirements traceability
 - Writes `step_N_valid.md` with verdict
 
-### Final Validator Agent
-- Reviews ALL changes together
-- Checks for cross-step conflicts
-- Verifies all requirements satisfied
-- Full build + test must pass
-- Writes `final_validation.md`
+## Workflow
+
+```
+┌─────────────┐
+│  ARCHITECT  │ ─── /iter-analyze creates requirements.md, step_N.md
+└──────┬──────┘
+       │
+       ▼
+┌─────────────┐
+│   WORKER    │ ─── /iter-step implements step exactly
+└──────┬──────┘
+       │
+       ▼
+┌─────────────┐     ┌─────────┐
+│  VALIDATOR  │ ──► │ REJECT  │ ──► Back to WORKER
+└──────┬──────┘     └─────────┘
+       │
+       ▼ (PASS)
+┌─────────────┐
+│  Next Step  │ ──► /iter-next, repeat until all steps done
+└─────────────┘
+       │
+       ▼
+┌─────────────┐
+│  COMPLETE   │ ─── /iter-complete writes summary.md
+└─────────────┘
+```
 
 ## Execution Rules
 
@@ -108,97 +133,86 @@ github.com/ternarybob/iter/
 - EXISTING PATTERNS ARE LAW - match codebase style exactly
 - CLEANUP IS MANDATORY - remove dead/redundant code
 - STEPS ARE MANDATORY - no implementation without step docs
-- SUMMARY IS MANDATORY - task incomplete without summary.md
 - BUILD VERIFICATION IS MANDATORY - verify after each change
-- OUTPUT CAPTURE IS MANDATORY - all command output to log files
 
 ### Exit Detection
-- Dual condition: indicators >= threshold AND ExitSignal = true
-- Never exit on ExitSignal alone
-- Never exit on indicators alone
-- summary.md existence is a completion indicator
+- Session completes when `/iter-complete` is run
+- Or when max iterations is reached
+- Stop hook blocks exit during active session
 
-### Output Capture
-- ALL build/test output goes to `workdir/logs/`
-- Agent context only sees pass/fail + last 30 lines on failure
-- Never paste full log contents into context
-- Reference logs by path
+## CLI Binary Commands
 
-## Key Types
+The Go binary (`bin/iter`) provides:
 
-### Task
-```go
-type Task struct {
-    ID          string
-    Description string
-    Type        TaskType
-    Files       []string
-    Context     map[string]any
-    Constraints TaskConstraints
-}
+```bash
+iter init "<task>" [--max-iterations N]  # Start session
+iter check                               # Check completion (for hook)
+iter analyze                             # Output architect prompt
+iter validate                            # Output validator prompt
+iter status                              # Show session status
+iter step [N]                            # Get step instructions
+iter next                                # Move to next step
+iter complete                            # Mark complete
+iter reset                               # Reset session
+iter reject "<reason>"                   # Record rejection
+iter pass                                # Record pass
+iter hook-stop                           # Stop hook handler (JSON output)
 ```
 
-### Result
-```go
-type Result struct {
-    TaskID     string
-    SkillName  string
-    Status     ResultStatus
-    Message    string
-    Changes    []Change
-    ExitSignal bool
-    NextTasks  []*Task
-}
+## Session State
+
+State is persisted in `.iter/` directory:
+- `.iter/state.json` - Session state
+- `.iter/workdir/` - Artifacts (requirements, steps, etc.)
+
+## Hook Configuration
+
+The stop hook (`hooks/hooks.json`) intercepts session exit and:
+1. Checks if iter session is active
+2. If not complete, blocks exit and injects continuation prompt
+3. If complete or max iterations reached, allows exit
+
+## Code Style (for Go packages)
+
+- Use slog for structured logging
+- Wrap errors with context: `fmt.Errorf("context: %w", err)`
+- Use functional options for configuration
+- No `fmt.Println` (use logger)
+- No global mutable state
+
+## Testing
+
+```bash
+# Unit tests
+go test ./...
+
+# With race detection
+go test -race ./...
+
+# Specific package
+go test ./cmd/iter/...
 ```
 
-### Step
-```go
-type Step struct {
-    Number             int
-    Title              string
-    Dependencies       []int
-    Requirements       []string
-    Approach           string
-    Cleanup            []CleanupItem
-    AcceptanceCriteria []string
-}
+## Development
+
+### Testing the plugin locally
+
+```bash
+# Build the binary
+go build -o bin/iter ./cmd/iter
+
+# Test with Claude Code
+claude --plugin-dir .
 ```
 
-### Verdict
-```go
-type Verdict struct {
-    Status            VerdictStatus  // pass or reject
-    Reasons           []string
-    RequirementStatus map[string]bool
-    BuildPassed       bool
-    TestsPassed       bool
-    CleanupVerified   bool
-}
-```
+### Adding a new command
 
-## Common Tasks
+1. Create `commands/<command-name>.md`
+2. Add YAML frontmatter with description and arguments
+3. Document the command behavior
 
-### Add a new skill
-1. Create package in `skills/<name>/`
-2. Implement `sdk.Skill` interface
-3. Add to `skills/skills.go` All() function
-4. Add tests in `skills/<name>/<name>_test.go`
+### Modifying hook behavior
 
-### Add a new LLM provider
-1. Implement `llm.Provider` interface in `pkg/llm/`
-2. Add constructor like `NewXProvider()`
-3. Add option like `WithXProvider()` to `iter.go`
-4. Add tests
-
-### Modify the agent loop
-1. Core loop logic is in `pkg/agent/loop.go`
-2. State machine in `pkg/agent/state.go`
-3. Exit detection in `pkg/agent/exit.go`
-4. Safety controls in `pkg/agent/circuit.go` and `ratelimit.go`
-
-### Add configuration option
-1. Add to `sdk.Config` types in `pkg/sdk/context.go`
-2. Add to `FileConfig` in `pkg/config/config.go`
-3. Add merge logic in `mergeConfig()`
-4. Add option function in `pkg/agent/options.go`
-5. Add convenience wrapper in `iter.go`
+1. Edit `hooks/hooks.json`
+2. Update `cmd/iter/main.go` for new CLI commands
+3. Rebuild the binary

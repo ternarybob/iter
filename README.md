@@ -1,18 +1,82 @@
 # Iter
 
-**Iter** (Latin: "journey, path") is a pure Go SDK for building autonomous DevOps agents that iteratively improve codebases.
+**Iter** (Latin: "journey, path") is a **Claude Code plugin** that implements an adversarial multi-agent DevOps loop.
 
-Unlike CLI wrappers, Iter is designed as an embeddable library with a plugin architecture for extensible skills.
+It provides a rigorous Architect → Worker → Validator feedback cycle for complex development tasks, with the Validator taking an adversarial stance (default: REJECT) to ensure correctness.
 
 ## Features
 
-- **SDK-First**: Embeddable library, not a CLI tool
-- **Plugin Architecture**: Skills are first-class interfaces
-- **Codebase-Aware**: Built-in AST indexing and semantic search
-- **Multi-Model**: Strategic routing (planning vs execution models)
-- **Adversarial Validation**: Multi-agent architecture with hostile review
+- **Claude Code Plugin**: Integrates directly with Claude Code via hooks and slash commands
+- **Adversarial Validation**: Multi-agent architecture with hostile review (default REJECT)
+- **Go-Powered CLI**: State management and prompt generation via compiled Go binary
+- **Codebase-Aware**: Built-in AST indexing and semantic search (SDK components)
 - **Correctness over Speed**: Requirements are law, validation is mandatory
-- **Convention over Configuration**: `.claude` directory and `SKILL.md` compatibility
+- **Self-Referential Loop**: Stop hook creates continuous improvement cycle
+
+## Quick Start (Plugin)
+
+```bash
+# Clone the repository
+git clone https://github.com/ternarybob/iter.git
+cd iter
+
+# Build the CLI binary
+go build -o bin/iter ./cmd/iter
+
+# Use with Claude Code
+claude --plugin-dir /path/to/iter
+
+# Start an adversarial loop
+/iter-loop "Add a health check endpoint to the API"
+```
+
+## Plugin Commands
+
+| Command | Description |
+|---------|-------------|
+| `/iter-loop "<task>"` | Start an adversarial multi-agent loop |
+| `/iter-analyze` | Run architect analysis |
+| `/iter-validate` | Run validator review (adversarial) |
+| `/iter-step [N]` | Get step instructions |
+| `/iter-status` | Show session status |
+| `/iter-next` | Move to next step |
+| `/iter-complete` | Mark session complete |
+| `/iter-reset` | Reset session |
+
+## Multi-Agent Architecture
+
+```
+┌─────────────┐
+│  ARCHITECT  │ ─── Analyzes requirements, creates step documents
+└──────┬──────┘
+       │
+       ▼
+┌─────────────┐
+│   WORKER    │ ─── Implements step exactly (you, via Claude Code)
+└──────┬──────┘
+       │
+       ▼
+┌─────────────┐     ┌─────────┐
+│  VALIDATOR  │ ──► │ REJECT  │ ──► Back to WORKER (fix issues)
+└──────┬──────┘     └─────────┘
+       │
+       ▼ (PASS)
+┌─────────────┐
+│  Next Step  │ ──► Repeat until all steps done
+└─────────────┘
+```
+
+| Agent | Role | Stance |
+|-------|------|--------|
+| **ARCHITECT** | Analyze requirements, create step docs | Thorough, comprehensive |
+| **WORKER** | Implement steps exactly as specified | Follow spec precisely |
+| **VALIDATOR** | Review implementation against requirements | **HOSTILE - default REJECT** |
+
+---
+
+## SDK Usage (Embeddable Library)
+
+Iter also provides a Go SDK for building autonomous agents programmatically.
 
 ## Installation
 

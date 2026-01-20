@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/iter hook-stop"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"continue\": true, \"systemMessage\": \"File modified. Remember to run /iter-validate after completing the current step.\"}'"
+          }
+        ]
+      }
+    ]
+  }
+}

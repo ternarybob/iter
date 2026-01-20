@@ -1,0 +1,20 @@
+{
+  "name": "iter",
+  "version": "1.0.0",
+  "description": "Adversarial multi-agent DevOps loop for Claude Code - Architect, Worker, Validator feedback cycle",
+  "author": {
+    "name": "ternarybob"
+  },
+  "repository": "https://github.com/ternarybob/iter",
+  "license": "MIT",
+  "keywords": [
+    "devops",
+    "agent",
+    "adversarial",
+    "validation",
+    "autonomous"
+  ],
+  "commands": "./commands/",
+  "skills": "./plugin-skills/",
+  "hooks": "./hooks/hooks.json"
+}
