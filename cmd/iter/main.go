@@ -18,6 +18,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -26,6 +27,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/ternarybob/iter/index"
 )
 
 const (
@@ -244,6 +247,10 @@ func main() {
 		err = cmdReset(args)
 	case "hook-stop":
 		err = cmdHookStop(args)
+	case "index":
+		err = cmdIndex(args)
+	case "search":
+		err = cmdSearch(args)
 	case "version", "-v", "--version":
 		cmdVersion()
 	case "help", "-h", "--help":
@@ -276,6 +283,17 @@ Commands:
   hook-stop              Stop hook handler (JSON output)
   version                Show version
   help                   Show this help
+
+Code Index Commands:
+  index                  Show index status
+  index build            Build/rebuild the full code index
+  index clear            Clear and rebuild the index
+  index watch            Start file watcher for real-time indexing
+  search "<query>"       Search the code index
+    --kind=<type>        Filter by symbol type (function, method, type, const)
+    --path=<prefix>      Filter by file path prefix
+    --branch=<branch>    Filter by git branch
+    --limit=<n>          Maximum results (default 10)
 
 The iter loop:
   1. ARCHITECT: Analyze requirements, create step documents
@@ -788,7 +806,7 @@ func cmdHookStop(args []string) error {
 	switch state.Phase {
 	case "architect":
 		state.Phase = "worker"
-		saveState(state)
+		_ = saveState(state)
 		nextPrompt = fmt.Sprintf(`# CONTINUE: Iteration %d/%d
 
 Architect phase complete. Begin implementation.
@@ -804,7 +822,7 @@ After implementation, validation runs automatically.`,
 	case "worker":
 		state.Phase = "validator"
 		state.ValidationPass++
-		saveState(state)
+		_ = saveState(state)
 		nextPrompt = fmt.Sprintf(`# CONTINUE: Iteration %d/%d
 
 Implementation complete. Running validation.
@@ -868,6 +886,186 @@ Run 'iter status' for session details.`,
 		Continue:      false,
 		SystemMessage: nextPrompt,
 	})
+}
+
+// Code Index Commands
+
+// cmdIndex handles the index subcommand.
+func cmdIndex(args []string) error {
+	// Get current working directory as repo root
+	repoRoot, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("get working directory: %w", err)
+	}
+
+	cfg := index.DefaultConfig(repoRoot)
+
+	// Determine subcommand
+	subCmd := ""
+	if len(args) > 0 {
+		subCmd = args[0]
+	}
+
+	switch subCmd {
+	case "build":
+		return cmdIndexBuild(cfg)
+	case "clear":
+		return cmdIndexClear(cfg)
+	case "watch":
+		return cmdIndexWatch(cfg)
+	default:
+		return cmdIndexStatus(cfg)
+	}
+}
+
+// cmdIndexStatus shows index statistics.
+func cmdIndexStatus(cfg index.Config) error {
+	idx, err := index.NewIndexer(cfg)
+	if err != nil {
+		return fmt.Errorf("create indexer: %w", err)
+	}
+
+	stats := idx.Stats()
+
+	fmt.Printf(`# Code Index Status
+
+Documents: %d
+Files indexed: %d
+Current branch: %s
+Last updated: %s
+Watcher running: %v
+
+Index path: %s
+`, stats.DocumentCount, stats.FileCount, stats.CurrentBranch,
+		formatTime(stats.LastUpdated), stats.WatcherRunning,
+		filepath.Join(cfg.RepoRoot, cfg.IndexPath))
+
+	return nil
+}
+
+// cmdIndexBuild performs a full repository index.
+func cmdIndexBuild(cfg index.Config) error {
+	fmt.Println("Building code index...")
+
+	idx, err := index.NewIndexer(cfg)
+	if err != nil {
+		return fmt.Errorf("create indexer: %w", err)
+	}
+
+	start := time.Now()
+	if err := idx.IndexAll(); err != nil {
+		return fmt.Errorf("index all: %w", err)
+	}
+
+	stats := idx.Stats()
+	fmt.Printf("Indexed %d symbols from %d files in %s\n",
+		stats.DocumentCount, stats.FileCount, time.Since(start).Round(time.Millisecond))
+
+	return nil
+}
+
+// cmdIndexClear clears and rebuilds the index.
+func cmdIndexClear(cfg index.Config) error {
+	fmt.Println("Clearing index...")
+
+	idx, err := index.NewIndexer(cfg)
+	if err != nil {
+		return fmt.Errorf("create indexer: %w", err)
+	}
+
+	if err := idx.Clear(); err != nil {
+		return fmt.Errorf("clear index: %w", err)
+	}
+
+	fmt.Println("Index cleared. Run 'iter index build' to rebuild.")
+	return nil
+}
+
+// cmdIndexWatch starts the file watcher.
+func cmdIndexWatch(cfg index.Config) error {
+	fmt.Println("Starting file watcher...")
+
+	idx, err := index.NewIndexer(cfg)
+	if err != nil {
+		return fmt.Errorf("create indexer: %w", err)
+	}
+
+	watcher, err := index.NewWatcher(idx)
+	if err != nil {
+		return fmt.Errorf("create watcher: %w", err)
+	}
+
+	if err := watcher.Start(); err != nil {
+		return fmt.Errorf("start watcher: %w", err)
+	}
+
+	fmt.Printf("Watching for changes in %s\n", cfg.RepoRoot)
+	fmt.Println("Press Ctrl+C to stop.")
+
+	// Block until interrupted
+	select {}
+}
+
+// cmdSearch searches the code index.
+func cmdSearch(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: iter search \"<query>\" [--kind=<type>] [--path=<prefix>] [--branch=<branch>] [--limit=<n>]")
+	}
+
+	query := args[0]
+	opts := index.SearchOptions{
+		Query: query,
+		Limit: 10,
+	}
+
+	// Parse optional flags
+	for i := 1; i < len(args); i++ {
+		arg := args[i]
+		if strings.HasPrefix(arg, "--kind=") {
+			opts.SymbolKind = strings.TrimPrefix(arg, "--kind=")
+		} else if strings.HasPrefix(arg, "--path=") {
+			opts.FilePath = strings.TrimPrefix(arg, "--path=")
+		} else if strings.HasPrefix(arg, "--branch=") {
+			opts.Branch = strings.TrimPrefix(arg, "--branch=")
+		} else if strings.HasPrefix(arg, "--limit=") {
+			n, err := strconv.Atoi(strings.TrimPrefix(arg, "--limit="))
+			if err == nil && n > 0 {
+				opts.Limit = n
+			}
+		}
+	}
+
+	// Get current working directory as repo root
+	repoRoot, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("get working directory: %w", err)
+	}
+
+	cfg := index.DefaultConfig(repoRoot)
+
+	idx, err := index.NewIndexer(cfg)
+	if err != nil {
+		return fmt.Errorf("create indexer: %w", err)
+	}
+
+	searcher := index.NewSearcher(idx)
+	results, err := searcher.Search(context.Background(), opts)
+	if err != nil {
+		return fmt.Errorf("search: %w", err)
+	}
+
+	// Output formatted results
+	fmt.Println(index.FormatResults(results))
+
+	return nil
+}
+
+// formatTime formats a time for display.
+func formatTime(t time.Time) string {
+	if t.IsZero() {
+		return "never"
+	}
+	return t.Format(time.RFC3339)
 }
 
 // State persistence
