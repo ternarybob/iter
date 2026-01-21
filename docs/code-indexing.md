@@ -6,40 +6,67 @@ Real-time local code indexing for the iter Claude plugin using chromem-go, go/as
 
 The code indexing system enables semantic and keyword search across Go codebases. It extracts symbols (functions, methods, types, constants) from source files and stores them in a persistent vector database for fast retrieval.
 
+**Key features:**
+- **Automatic indexing**: Index is built automatically on first use
+- **Real-time updates**: File watcher runs in background during sessions
+- **Zero configuration**: Works out of the box with sensible defaults
+
 ## Quick Start
 
 ```bash
-# Build the index for current repository
-iter index build
-
-# Search for code
-iter search "handler"
+# Search for code (auto-builds index if needed)
+/iter-search "handler"
 
 # Search with filters
-iter search "Config" --kind=type
-iter search "Parse" --path=index/
-iter search "State" --limit=5
+/iter-search "Config" --kind=type
+/iter-search "Parse" --path=index/
+/iter-search "State" --limit=5
+
+# Check index status
+/iter-index
+
+# Manually rebuild index
+/iter-index build
 ```
+
+## Automation
+
+### Auto-Build
+
+The index is built automatically when:
+- Running `/iter-search` with an empty index
+- Running `/iter-index` with an empty index
+- Starting a session with `/iter` or `/iter-workflow`
+
+No manual `build` command is needed for normal use.
+
+### Background Watcher
+
+The file watcher starts automatically when:
+- Running `/iter-search`
+- Starting a session with `/iter` or `/iter-workflow`
+
+The watcher monitors `.go` files and updates the index in real-time as you edit code. Changes are debounced (500ms) to avoid excessive reindexing.
 
 ## Commands
 
-### iter index
+### /iter-index
 
 Manages the code index.
 
 | Command | Description |
 |---------|-------------|
-| `iter index` | Show index status (document count, branch, last updated) |
-| `iter index build` | Build/rebuild the full code index |
-| `iter index clear` | Clear and rebuild the index |
-| `iter index watch` | Start file watcher for real-time indexing |
+| `/iter-index` | Show index status (auto-builds if empty) |
+| `/iter-index build` | Force rebuild the full code index |
+| `/iter-index clear` | Clear the index completely |
+| `/iter-index watch` | Start file watcher manually (blocking) |
 
-### iter search
+### /iter-search
 
 Search indexed code.
 
 ```
-iter search "<query>" [options]
+/iter-search "<query>" [options]
 ```
 
 **Options:**
@@ -52,6 +79,19 @@ iter search "<query>" [options]
 | `--limit=<n>` | Maximum results (default 10) | `--limit=5` |
 
 **Symbol kinds:** `function`, `method`, `type`, `const`
+
+**Examples:**
+
+```bash
+# Find all Config types
+/iter-search "Config" --kind=type
+
+# Search in specific directory
+/iter-search "handler" --path=api/
+
+# Limit results
+/iter-search "Parse" --limit=3
+```
 
 ## Architecture
 
@@ -151,6 +191,7 @@ Uses `fsnotify` for real-time file monitoring.
 - Skips: `vendor/`, `.git/`, `node_modules/`, `.iter/`
 - Filters: Only `.go` files, only WRITE/CREATE events
 - Debounces: Waits 500ms after last event before indexing
+- Starts automatically during sessions
 
 #### Searcher (`search.go`)
 
@@ -163,9 +204,7 @@ Provides query interface over indexed documents.
 
 **Result formatting:**
 
-```go
-// FormatResults() outputs markdown suitable for prompt injection:
-
+```markdown
 ## Relevant Code from Index
 
 ### 1. function `GetStatus` (89% match)
@@ -181,7 +220,7 @@ Index is stored at `<project>/.iter/index/` using chromem-go's persistent storag
 
 ### Git Integration
 
-- `.iter/` is gitignored (configured in `.gitignore:38`)
+- `.iter/` is gitignored (configured in `.gitignore`)
 - Each indexed chunk is tagged with current git branch
 - Search can filter by branch: `--branch=main`
 
@@ -190,8 +229,8 @@ Index is stored at `<project>/.iter/index/` using chromem-go's persistent storag
 If the index becomes corrupted or out of sync:
 
 ```bash
-iter index clear   # Removes all indexed data
-iter index build   # Full reindex from source
+/iter-index clear   # Removes all indexed data
+/iter-index build   # Full reindex from source
 ```
 
 ## Configuration
@@ -214,14 +253,14 @@ Config{
 
 ## Agent Integration
 
-The indexing system is designed to provide context to iter's agent phases.
+The indexing system provides context to iter's agent phases automatically.
 
 ### Architect Phase
 
 Query for related patterns before planning:
 
 ```bash
-iter search "authentication handler"
+/iter-search "authentication handler"
 ```
 
 Inject results into architect prompt to inform step planning.
@@ -231,8 +270,8 @@ Inject results into architect prompt to inform step planning.
 Query for implementation context:
 
 ```bash
-iter search "Config" --kind=type
-iter search "NewClient" --kind=function
+/iter-search "Config" --kind=type
+/iter-search "NewClient" --kind=function
 ```
 
 Provides exact signatures to match and utilities to reuse.
@@ -242,7 +281,7 @@ Provides exact signatures to match and utilities to reuse.
 Query for duplicate/impact detection:
 
 ```bash
-iter search "NewHandler" --kind=function
+/iter-search "NewHandler" --kind=function
 ```
 
 Check if similar functions already exist (potential duplicates).

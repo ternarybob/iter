@@ -399,6 +399,14 @@ func cmdRun(args []string) error {
 		return fmt.Errorf("failed to save state: %w", err)
 	}
 
+	// Start code indexing with background watcher
+	repoRoot, _ := os.Getwd()
+	cfg := index.DefaultConfig(repoRoot)
+	if err := startBackgroundWatcher(cfg); err != nil {
+		// Non-fatal: log warning but continue
+		fmt.Fprintf(os.Stderr, "warning: failed to start code indexer: %v\n", err)
+	}
+
 	// Output the full iterative implementation prompt
 	fmt.Printf(`# ITERATIVE IMPLEMENTATION
 
@@ -485,6 +493,14 @@ func cmdWorkflow(args []string) error {
 
 	if err := saveState(state); err != nil {
 		return fmt.Errorf("failed to save state: %w", err)
+	}
+
+	// Start code indexing with background watcher
+	repoRoot, _ := os.Getwd()
+	cfg := index.DefaultConfig(repoRoot)
+	if err := startBackgroundWatcher(cfg); err != nil {
+		// Non-fatal: log warning but continue
+		fmt.Fprintf(os.Stderr, "warning: failed to start code indexer: %v\n", err)
 	}
 
 	fmt.Printf(`# WORKFLOW EXECUTION
@@ -890,6 +906,55 @@ Run 'iter status' for session details.`,
 
 // Code Index Commands
 
+// Global watcher instance for background monitoring
+var globalWatcher *index.Watcher
+
+// ensureIndex checks if index exists and builds it if empty.
+func ensureIndex(cfg index.Config) (*index.Indexer, error) {
+	idx, err := index.NewIndexer(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("create indexer: %w", err)
+	}
+
+	// Auto-build if index is empty
+	if idx.Stats().DocumentCount == 0 {
+		fmt.Println("Index is empty. Building automatically...")
+		start := time.Now()
+		if err := idx.IndexAll(); err != nil {
+			return nil, fmt.Errorf("auto-build index: %w", err)
+		}
+		stats := idx.Stats()
+		fmt.Printf("Indexed %d symbols from %d files in %s\n",
+			stats.DocumentCount, stats.FileCount, time.Since(start).Round(time.Millisecond))
+	}
+
+	return idx, nil
+}
+
+// startBackgroundWatcher starts the file watcher in a goroutine.
+func startBackgroundWatcher(cfg index.Config) error {
+	if globalWatcher != nil && globalWatcher.IsRunning() {
+		return nil // Already running
+	}
+
+	idx, err := ensureIndex(cfg)
+	if err != nil {
+		return err
+	}
+
+	watcher, err := index.NewWatcher(idx)
+	if err != nil {
+		return fmt.Errorf("create watcher: %w", err)
+	}
+
+	if err := watcher.Start(); err != nil {
+		return fmt.Errorf("start watcher: %w", err)
+	}
+
+	globalWatcher = watcher
+	return nil
+}
+
 // cmdIndex handles the index subcommand.
 func cmdIndex(args []string) error {
 	// Get current working directory as repo root
@@ -920,12 +985,13 @@ func cmdIndex(args []string) error {
 
 // cmdIndexStatus shows index statistics.
 func cmdIndexStatus(cfg index.Config) error {
-	idx, err := index.NewIndexer(cfg)
+	idx, err := ensureIndex(cfg)
 	if err != nil {
-		return fmt.Errorf("create indexer: %w", err)
+		return err
 	}
 
 	stats := idx.Stats()
+	watcherRunning := globalWatcher != nil && globalWatcher.IsRunning()
 
 	fmt.Printf(`# Code Index Status
 
@@ -937,7 +1003,7 @@ Watcher running: %v
 
 Index path: %s
 `, stats.DocumentCount, stats.FileCount, stats.CurrentBranch,
-		formatTime(stats.LastUpdated), stats.WatcherRunning,
+		formatTime(stats.LastUpdated), watcherRunning,
 		filepath.Join(cfg.RepoRoot, cfg.IndexPath))
 
 	return nil
@@ -1043,10 +1109,14 @@ func cmdSearch(args []string) error {
 
 	cfg := index.DefaultConfig(repoRoot)
 
-	idx, err := index.NewIndexer(cfg)
+	// Auto-build index if needed and start watcher
+	idx, err := ensureIndex(cfg)
 	if err != nil {
-		return fmt.Errorf("create indexer: %w", err)
+		return err
 	}
+
+	// Start background watcher for real-time updates
+	_ = startBackgroundWatcher(cfg)
 
 	searcher := index.NewSearcher(idx)
 	results, err := searcher.Search(context.Background(), opts)
