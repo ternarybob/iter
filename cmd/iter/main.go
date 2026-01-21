@@ -34,7 +34,7 @@ import (
 const (
 	stateDir  = ".iter"
 	stateFile = "state.json"
-	version   = "2.0.0"
+	version   = "2.1.20260121-2211"
 )
 
 // Embedded prompts - all prompt content lives here in the binary

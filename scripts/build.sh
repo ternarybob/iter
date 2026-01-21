@@ -7,13 +7,27 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 MARKETPLACE_NAME="iter-local"
 
-echo "Building iter plugin (marketplace format)..."
+# Generate version with datetime stamp (e.g., 2.1.20260121-2210)
+MAJOR_MINOR="2.1"
+DATETIME_STAMP=$(date +"%Y%m%d-%H%M")
+VERSION="${MAJOR_MINOR}.${DATETIME_STAMP}"
+
+echo "Building iter plugin v${VERSION} (marketplace format)..."
 
 # Check Go
 if ! command -v go &> /dev/null; then
     echo "Error: Go is not installed. Install Go 1.22+ from https://go.dev/dl/"
     exit 1
 fi
+
+# Update version in source files
+echo "Updating version to ${VERSION}..."
+
+# Update main.go version constant
+sed -i "s/version   = \"[^\"]*\"/version   = \"${VERSION}\"/" "$PROJECT_DIR/cmd/iter/main.go"
+
+# Update plugin.json version
+sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"${VERSION}\"/" "$PROJECT_DIR/.claude-plugin/plugin.json"
 
 # Create marketplace structure:
 #   bin/
@@ -36,10 +50,10 @@ go mod download
 go build -o "$PROJECT_DIR/bin/plugins/iter/iter" "$PROJECT_DIR/cmd/iter"
 chmod +x "$PROJECT_DIR/bin/plugins/iter/iter"
 
-# Create marketplace manifest
-cat > "$PROJECT_DIR/bin/.claude-plugin/marketplace.json" << 'EOF'
+# Create marketplace manifest with current version
+cat > "$PROJECT_DIR/bin/.claude-plugin/marketplace.json" << EOF
 {
-  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "\$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "iter-local",
   "description": "Local marketplace for Iter - adversarial iterative implementation plugin",
   "owner": {
@@ -49,7 +63,7 @@ cat > "$PROJECT_DIR/bin/.claude-plugin/marketplace.json" << 'EOF'
     {
       "name": "iter",
       "description": "Adversarial iterative implementation - structured loop until requirements/tests pass",
-      "version": "2.0.0",
+      "version": "${VERSION}",
       "author": {
         "name": "ternarybob"
       },
@@ -89,6 +103,7 @@ fi
 
 echo ""
 echo "Build complete: $PROJECT_DIR/bin/"
+echo "Version: ${VERSION}"
 echo ""
 echo "Marketplace structure:"
 find "$PROJECT_DIR/bin" -type f | sed "s|$PROJECT_DIR/||" | sort
