@@ -22,14 +22,257 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/ternarybob/iter/index"
 )
+
+// OSInfo contains detected operating system information.
+type OSInfo struct {
+	OS       string // "linux", "darwin", "windows"
+	IsWSL    bool   // Running in Windows Subsystem for Linux
+	WSLDistro string // WSL distribution name if applicable
+}
+
+// detectOS detects the operating system and WSL environment.
+func detectOS() OSInfo {
+	info := OSInfo{
+		OS: runtime.GOOS,
+	}
+
+	// Detect WSL
+	if runtime.GOOS == "linux" {
+		// Check for WSL indicators
+		if data, err := os.ReadFile("/proc/version"); err == nil {
+			version := strings.ToLower(string(data))
+			if strings.Contains(version, "microsoft") || strings.Contains(version, "wsl") {
+				info.IsWSL = true
+				// Try to get WSL distro name
+				if distro := os.Getenv("WSL_DISTRO_NAME"); distro != "" {
+					info.WSLDistro = distro
+				}
+			}
+		}
+		// Also check for WSL interop
+		if _, err := os.Stat("/proc/sys/fs/binfmt_misc/WSLInterop"); err == nil {
+			info.IsWSL = true
+		}
+	}
+
+	return info
+}
+
+// getOSGuidance returns OS-specific guidance for Claude.
+func getOSGuidance(info OSInfo) string {
+	var guidance strings.Builder
+
+	guidance.WriteString("## ENVIRONMENT\n\n")
+	guidance.WriteString(fmt.Sprintf("- **OS**: %s\n", info.OS))
+
+	if info.IsWSL {
+		guidance.WriteString(fmt.Sprintf("- **WSL**: Yes (distro: %s)\n", info.WSLDistro))
+		guidance.WriteString(`
+### WSL-SPECIFIC RULES (CRITICAL)
+
+You are running in Windows Subsystem for Linux. Follow these rules:
+
+1. **NEVER use /mnt/c paths for git operations** - Cross-filesystem operations are unreliable
+2. **For directory renames**: Use standard 'mv' or 'git mv' - if it fails with "Invalid argument", this is a WSL/NTFS limitation
+3. **If filesystem operations fail 2 times**: STOP and report the blocker to the user
+4. **Do NOT try workarounds** like cmd.exe, xcopy, or Windows commands - they create metadata inconsistencies
+5. **Preferred approach for cross-filesystem issues**:
+   - Ask user to run the operation from Windows side, OR
+   - Work entirely within the Linux filesystem (/home/...)
+
+### BLOCKER HANDLING
+
+If you encounter:
+- "Invalid argument" on rename/move
+- "No such file or directory" for files that exist on Windows
+- Directory metadata inconsistencies
+
+Then STOP immediately and report:
+1. The specific error
+2. That this is a WSL filesystem limitation
+3. Ask the user how they want to proceed
+`)
+	} else if info.OS == "darwin" {
+		guidance.WriteString("- **Platform**: macOS\n")
+		guidance.WriteString(`
+### macOS-SPECIFIC NOTES
+
+- Use standard Unix commands for file operations
+- Case-insensitive filesystem by default (APFS)
+- Homebrew paths may be in /opt/homebrew (Apple Silicon) or /usr/local (Intel)
+`)
+	} else if info.OS == "windows" {
+		guidance.WriteString("- **Platform**: Windows (native)\n")
+		guidance.WriteString(`
+### WINDOWS-SPECIFIC NOTES
+
+- Use PowerShell or cmd syntax for shell commands
+- Path separators are backslashes (\) but forward slashes often work
+- Be aware of path length limits (260 chars by default)
+`)
+	} else {
+		guidance.WriteString("- **Platform**: Linux\n")
+		guidance.WriteString(`
+### LINUX NOTES
+
+- Standard Unix commands available
+- Case-sensitive filesystem
+`)
+	}
+
+	guidance.WriteString(`
+### GENERAL BLOCKER RULES
+
+After **3 failed attempts** at the same operation:
+1. STOP trying workarounds
+2. Document what you tried
+3. Report the blocker to the user
+4. Ask for guidance before proceeding
+
+Do NOT enter retry loops for environmental issues.
+`)
+
+	return guidance.String()
+}
+
+// Git worktree management
+
+// gitCmd runs a git command and returns its output.
+func gitCmd(args ...string) (string, error) {
+	cmd := exec.Command("git", args...)
+	output, err := cmd.CombinedOutput()
+	return strings.TrimSpace(string(output)), err
+}
+
+// getCurrentBranch returns the current git branch name.
+func getCurrentBranch() (string, error) {
+	return gitCmd("rev-parse", "--abbrev-ref", "HEAD")
+}
+
+// isGitRepo checks if the current directory is a git repository.
+func isGitRepo() bool {
+	_, err := gitCmd("rev-parse", "--git-dir")
+	return err == nil
+}
+
+// hasUncommittedChanges checks if there are uncommitted changes.
+func hasUncommittedChanges() bool {
+	output, _ := gitCmd("status", "--porcelain")
+	return output != ""
+}
+
+// createWorktree creates a git worktree for isolated work.
+// Returns the worktree path and branch name.
+func createWorktree(taskSlug string) (worktreePath, branchName string, err error) {
+	// Get current branch
+	currentBranch, err := getCurrentBranch()
+	if err != nil {
+		return "", "", fmt.Errorf("get current branch: %w", err)
+	}
+
+	// Get current working directory for absolute path
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", "", fmt.Errorf("get working directory: %w", err)
+	}
+
+	// Generate unique branch name
+	timestamp := time.Now().Format("20060102-150405")
+	branchName = fmt.Sprintf("iter/%s-%s", taskSlug, timestamp)
+
+	// Worktree path in .iter/worktrees/ - use absolute path
+	worktreePath = filepath.Join(cwd, stateDir, "worktrees", branchName)
+
+	// Ensure parent directory exists
+	if err := os.MkdirAll(filepath.Dir(worktreePath), 0755); err != nil {
+		return "", "", fmt.Errorf("create worktree parent dir: %w", err)
+	}
+
+	// Create the worktree with a new branch
+	_, err = gitCmd("worktree", "add", "-b", branchName, worktreePath, currentBranch)
+	if err != nil {
+		return "", "", fmt.Errorf("create worktree: %w", err)
+	}
+
+	return worktreePath, branchName, nil
+}
+
+// mergeWorktree merges the worktree branch back to the original branch.
+func mergeWorktree(state *State) error {
+	if state.WorktreeBranch == "" || state.OriginalBranch == "" {
+		return nil // No worktree to merge
+	}
+
+	// Change to original workdir
+	originalWd, _ := os.Getwd()
+	if state.OriginalWorkdir != "" {
+		if err := os.Chdir(state.OriginalWorkdir); err != nil {
+			return fmt.Errorf("change to original dir: %w", err)
+		}
+		defer func() { _ = os.Chdir(originalWd) }()
+	}
+
+	// Check for uncommitted changes in worktree first
+	if state.WorktreePath != "" {
+		if err := os.Chdir(state.WorktreePath); err == nil {
+			if hasUncommittedChanges() {
+				// Auto-commit any pending changes
+				_, _ = gitCmd("add", "-A")
+				_, _ = gitCmd("commit", "-m", fmt.Sprintf("iter: auto-commit before merge for task: %s", state.Task))
+			}
+			_ = os.Chdir(originalWd)
+			if state.OriginalWorkdir != "" {
+				_ = os.Chdir(state.OriginalWorkdir)
+			}
+		}
+	}
+
+	// Checkout original branch
+	if _, err := gitCmd("checkout", state.OriginalBranch); err != nil {
+		return fmt.Errorf("checkout original branch %s: %w", state.OriginalBranch, err)
+	}
+
+	// Merge the worktree branch
+	_, err := gitCmd("merge", "--no-ff", "-m", fmt.Sprintf("iter: merge %s", state.WorktreeBranch), state.WorktreeBranch)
+	if err != nil {
+		return fmt.Errorf("merge worktree branch: %w", err)
+	}
+
+	return nil
+}
+
+// cleanupWorktree removes the worktree and optionally the branch.
+func cleanupWorktree(state *State, deleteBranch bool) error {
+	if state.WorktreePath == "" {
+		return nil
+	}
+
+	// Remove the worktree
+	if _, err := gitCmd("worktree", "remove", "--force", state.WorktreePath); err != nil {
+		// Try manual removal if git worktree remove fails
+		_ = os.RemoveAll(state.WorktreePath)
+	}
+
+	// Prune worktree references
+	_, _ = gitCmd("worktree", "prune")
+
+	// Optionally delete the branch
+	if deleteBranch && state.WorktreeBranch != "" {
+		_, _ = gitCmd("branch", "-D", state.WorktreeBranch)
+	}
+
+	return nil
+}
 
 const (
 	stateDir  = ".iter"
@@ -189,6 +432,12 @@ type State struct {
 	Completed      bool      `json:"completed"`
 	Artifacts      []string  `json:"artifacts"`
 	Verdicts       []Verdict `json:"verdicts"`
+	// Git worktree fields
+	OriginalBranch  string `json:"original_branch,omitempty"`
+	WorktreeBranch  string `json:"worktree_branch,omitempty"`
+	WorktreePath    string `json:"worktree_path,omitempty"`
+	OriginalWorkdir string `json:"original_workdir,omitempty"`
+	OSInfo          OSInfo `json:"os_info"`
 }
 
 // Verdict represents a validator verdict.
@@ -272,14 +521,18 @@ func printUsage() {
 
 Commands:
   run "<task>"           Start iterative implementation until requirements/tests pass
+    --max-iterations N   Set maximum iterations (default 50)
+    --no-worktree        Disable git worktree isolation
   workflow "<spec>"      Start workflow-based implementation
+    --max-iterations N   Set maximum iterations (default 50)
+    --no-worktree        Disable git worktree isolation
   status                 Show current session status
   step [N]               Show current/specific step instructions
   pass                   Record validation pass
   reject "<reason>"      Record validation rejection
   next                   Move to next step
-  complete               Mark session complete
-  reset                  Reset session state
+  complete               Mark session complete (merges worktree if active)
+  reset                  Reset session state (cleans up worktree)
   hook-stop              Stop hook handler (JSON output)
   version                Show version
   help                   Show this help
@@ -299,7 +552,16 @@ The iter loop:
   1. ARCHITECT: Analyze requirements, create step documents
   2. WORKER: Implement each step exactly as specified
   3. VALIDATOR: Review with adversarial stance (default REJECT)
-  4. Loop until all steps pass or max iterations reached`)
+  4. Loop until all steps pass or max iterations reached
+
+Git Worktree:
+  By default, iter creates an isolated git worktree for each session.
+  This ensures changes don't affect your main branch until completion.
+  Use --no-worktree to disable this behavior.
+
+OS Detection:
+  iter automatically detects the operating system (Linux, macOS, Windows, WSL)
+  and provides environment-specific guidance to Claude.`)
 }
 
 func cmdVersion() {
@@ -345,20 +607,26 @@ func summarizeTask(task string) string {
 }
 
 // generateWorkdirPath creates a unique workdir path from a task.
-func generateWorkdirPath(task string) string {
+// If baseDir is provided, returns an absolute path under that directory.
+func generateWorkdirPath(task, baseDir string) string {
 	slug := summarizeTask(task)
 	timestamp := time.Now().Format("20060102-03-04")
-	return filepath.Join(stateDir, "workdir", fmt.Sprintf("%s-%s", slug, timestamp))
+	relPath := filepath.Join(stateDir, "workdir", fmt.Sprintf("%s-%s", slug, timestamp))
+	if baseDir != "" {
+		return filepath.Join(baseDir, relPath)
+	}
+	return relPath
 }
 
 // cmdRun starts an iterative implementation session.
 func cmdRun(args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: iter run \"<task>\" [--max-iterations N]")
+		return fmt.Errorf("usage: iter run \"<task>\" [--max-iterations N] [--no-worktree]")
 	}
 
 	task := args[0]
 	maxIterations := 50
+	useWorktree := true
 
 	for i := 1; i < len(args); i++ {
 		if args[i] == "--max-iterations" && i+1 < len(args) {
@@ -369,25 +637,79 @@ func cmdRun(args []string) error {
 			maxIterations = n
 			i++
 		}
+		if args[i] == "--no-worktree" {
+			useWorktree = false
+		}
 	}
 
-	// Generate unique workdir path
-	workdir := generateWorkdirPath(task)
+	// Detect OS
+	osInfo := detectOS()
+
+	// Get current working directory
+	originalWorkdir, _ := os.Getwd()
+
+	// Generate unique workdir path (always relative to original workdir)
+	workdir := generateWorkdirPath(task, originalWorkdir)
+	taskSlug := summarizeTask(task)
 
 	// Initialize state
 	state := &State{
-		Task:           task,
-		Mode:           "iter",
-		Workdir:        workdir,
-		MaxIterations:  maxIterations,
-		Iteration:      1,
-		Phase:          "architect",
-		CurrentStep:    1,
-		TotalSteps:     0,
-		StartedAt:      time.Now(),
-		LastActivityAt: time.Now(),
-		Artifacts:      []string{},
-		Verdicts:       []Verdict{},
+		Task:            task,
+		Mode:            "iter",
+		Workdir:         workdir,
+		MaxIterations:   maxIterations,
+		Iteration:       1,
+		Phase:           "architect",
+		CurrentStep:     1,
+		TotalSteps:      0,
+		StartedAt:       time.Now(),
+		LastActivityAt:  time.Now(),
+		Artifacts:       []string{},
+		Verdicts:        []Verdict{},
+		OriginalWorkdir: originalWorkdir,
+		OSInfo:          osInfo,
+	}
+
+	// Create git worktree if in a git repo
+	worktreeInfo := ""
+	if useWorktree && isGitRepo() {
+		// Check for uncommitted changes
+		if hasUncommittedChanges() {
+			fmt.Println("Warning: You have uncommitted changes. Consider committing or stashing them first.")
+			fmt.Println("Proceeding with worktree creation...")
+		}
+
+		// Get current branch before creating worktree
+		currentBranch, err := getCurrentBranch()
+		if err != nil {
+			return fmt.Errorf("failed to get current branch: %w", err)
+		}
+		state.OriginalBranch = currentBranch
+
+		// Create worktree
+		worktreePath, branchName, err := createWorktree(taskSlug)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to create worktree: %v\n", err)
+			fmt.Fprintln(os.Stderr, "Continuing without worktree isolation...")
+		} else {
+			state.WorktreePath = worktreePath
+			state.WorktreeBranch = branchName
+
+			// Change to worktree directory
+			if err := os.Chdir(worktreePath); err != nil {
+				return fmt.Errorf("failed to change to worktree: %w", err)
+			}
+
+			worktreeInfo = fmt.Sprintf(`
+## Git Worktree (ISOLATED WORKSPACE)
+- **Original branch**: %s
+- **Working branch**: %s
+- **Worktree path**: %s
+
+All changes will be made in this isolated worktree.
+On completion, changes will be merged back to '%s'.
+`, currentBranch, branchName, worktreePath, currentBranch)
+		}
 	}
 
 	// Create workdir
@@ -407,10 +729,15 @@ func cmdRun(args []string) error {
 		fmt.Fprintf(os.Stderr, "warning: failed to start code indexer: %v\n", err)
 	}
 
+	// Get OS guidance
+	osGuidance := getOSGuidance(osInfo)
+
 	// Output the full iterative implementation prompt
 	fmt.Printf(`# ITERATIVE IMPLEMENTATION
 
 ## Task
+%s
+%s
 %s
 
 %s
@@ -441,6 +768,8 @@ The session will continue until all steps pass validation or max iterations reac
 Exit is blocked until completion - use 'iter complete' when done or 'iter reset' to abort.
 `,
 		task,
+		worktreeInfo,
+		osGuidance,
 		prompts.SystemRules,
 		prompts.ValidationRules,
 		prompts.ArchitectRole,
@@ -452,11 +781,12 @@ Exit is blocked until completion - use 'iter complete' when done or 'iter reset'
 // cmdWorkflow starts a workflow-based implementation session.
 func cmdWorkflow(args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: iter workflow \"<workflow-spec>\"")
+		return fmt.Errorf("usage: iter workflow \"<workflow-spec>\" [--max-iterations N] [--no-worktree]")
 	}
 
 	spec := args[0]
 	maxIterations := 50
+	useWorktree := true
 
 	for i := 1; i < len(args); i++ {
 		if args[i] == "--max-iterations" && i+1 < len(args) {
@@ -467,24 +797,74 @@ func cmdWorkflow(args []string) error {
 			maxIterations = n
 			i++
 		}
+		if args[i] == "--no-worktree" {
+			useWorktree = false
+		}
 	}
 
-	// Generate unique workdir path
-	workdir := generateWorkdirPath(spec)
+	// Detect OS
+	osInfo := detectOS()
+
+	// Get current working directory
+	originalWorkdir, _ := os.Getwd()
+
+	// Generate unique workdir path (always relative to original workdir)
+	workdir := generateWorkdirPath(spec, originalWorkdir)
+	taskSlug := summarizeTask(spec)
 
 	state := &State{
-		Task:           "Workflow execution",
-		Mode:           "workflow",
-		WorkflowSpec:   spec,
-		Workdir:        workdir,
-		MaxIterations:  maxIterations,
-		Iteration:      1,
-		Phase:          "architect",
-		CurrentStep:    1,
-		StartedAt:      time.Now(),
-		LastActivityAt: time.Now(),
-		Artifacts:      []string{},
-		Verdicts:       []Verdict{},
+		Task:            "Workflow execution",
+		Mode:            "workflow",
+		WorkflowSpec:    spec,
+		Workdir:         workdir,
+		MaxIterations:   maxIterations,
+		Iteration:       1,
+		Phase:           "architect",
+		CurrentStep:     1,
+		StartedAt:       time.Now(),
+		LastActivityAt:  time.Now(),
+		Artifacts:       []string{},
+		Verdicts:        []Verdict{},
+		OriginalWorkdir: originalWorkdir,
+		OSInfo:          osInfo,
+	}
+
+	// Create git worktree if in a git repo
+	worktreeInfo := ""
+	if useWorktree && isGitRepo() {
+		if hasUncommittedChanges() {
+			fmt.Println("Warning: You have uncommitted changes. Consider committing or stashing them first.")
+			fmt.Println("Proceeding with worktree creation...")
+		}
+
+		currentBranch, err := getCurrentBranch()
+		if err != nil {
+			return fmt.Errorf("failed to get current branch: %w", err)
+		}
+		state.OriginalBranch = currentBranch
+
+		worktreePath, branchName, err := createWorktree(taskSlug)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to create worktree: %v\n", err)
+			fmt.Fprintln(os.Stderr, "Continuing without worktree isolation...")
+		} else {
+			state.WorktreePath = worktreePath
+			state.WorktreeBranch = branchName
+
+			if err := os.Chdir(worktreePath); err != nil {
+				return fmt.Errorf("failed to change to worktree: %w", err)
+			}
+
+			worktreeInfo = fmt.Sprintf(`
+## Git Worktree (ISOLATED WORKSPACE)
+- **Original branch**: %s
+- **Working branch**: %s
+- **Worktree path**: %s
+
+All changes will be made in this isolated worktree.
+On completion, changes will be merged back to '%s'.
+`, currentBranch, branchName, worktreePath, currentBranch)
+		}
 	}
 
 	if err := os.MkdirAll(workdir, 0755); err != nil {
@@ -503,7 +883,12 @@ func cmdWorkflow(args []string) error {
 		fmt.Fprintf(os.Stderr, "warning: failed to start code indexer: %v\n", err)
 	}
 
+	// Get OS guidance
+	osGuidance := getOSGuidance(osInfo)
+
 	fmt.Printf(`# WORKFLOW EXECUTION
+%s
+%s
 
 %s
 
@@ -533,6 +918,8 @@ Use 'iter pass'/'iter reject' to record phase outcomes.
 Use 'iter next' to advance phases.
 Use 'iter complete' when workflow is done.
 `,
+		worktreeInfo,
+		osGuidance,
 		prompts.SystemRules,
 		prompts.ValidationRules,
 		spec,
@@ -740,6 +1127,30 @@ func cmdComplete(args []string) error {
 	state.Phase = "complete"
 	state.LastActivityAt = time.Now()
 
+	// Handle git worktree merge
+	if state.WorktreeBranch != "" && state.OriginalBranch != "" {
+		fmt.Printf("Merging worktree branch '%s' into '%s'...\n", state.WorktreeBranch, state.OriginalBranch)
+
+		if err := mergeWorktree(state); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to merge worktree: %v\n", err)
+			fmt.Fprintln(os.Stderr, "You may need to merge manually:")
+			fmt.Fprintf(os.Stderr, "  git checkout %s\n", state.OriginalBranch)
+			fmt.Fprintf(os.Stderr, "  git merge %s\n", state.WorktreeBranch)
+		} else {
+			fmt.Println("Worktree merged successfully.")
+
+			// Cleanup worktree (keep branch for reference)
+			if err := cleanupWorktree(state, false); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to cleanup worktree: %v\n", err)
+			}
+
+			// Change back to original directory
+			if state.OriginalWorkdir != "" {
+				_ = os.Chdir(state.OriginalWorkdir)
+			}
+		}
+	}
+
 	if err := saveState(state); err != nil {
 		return fmt.Errorf("failed to save state: %w", err)
 	}
@@ -756,9 +1167,17 @@ func cmdComplete(args []string) error {
 - Total Iterations: %d
 - Steps Completed: %d/%d
 - Rejections: %d
-
-## Verdicts
 `, state.Task, state.Mode, state.Iteration, state.CurrentStep, state.TotalSteps, state.Rejections)
+
+	if state.WorktreeBranch != "" {
+		summary += fmt.Sprintf(`
+## Git Info
+- Original Branch: %s
+- Work Branch: %s
+`, state.OriginalBranch, state.WorktreeBranch)
+	}
+
+	summary += "\n## Verdicts\n"
 
 	for _, v := range state.Verdicts {
 		summary += fmt.Sprintf("\n### Step %d Pass %d: %s\n", v.Step, v.Pass, v.Status)
@@ -779,6 +1198,29 @@ func cmdComplete(args []string) error {
 
 // cmdReset clears session state.
 func cmdReset(args []string) error {
+	// Try to load state to cleanup worktree
+	state, err := loadState()
+	if err == nil && state.WorktreeBranch != "" {
+		fmt.Println("Cleaning up worktree...")
+
+		// Change back to original directory first
+		if state.OriginalWorkdir != "" {
+			_ = os.Chdir(state.OriginalWorkdir)
+		}
+
+		// Checkout original branch
+		if state.OriginalBranch != "" {
+			if _, err := gitCmd("checkout", state.OriginalBranch); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to checkout original branch: %v\n", err)
+			}
+		}
+
+		// Cleanup worktree and delete the branch (since we're resetting)
+		if err := cleanupWorktree(state, true); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to cleanup worktree: %v\n", err)
+		}
+	}
+
 	if err := os.RemoveAll(stateDir); err != nil {
 		return fmt.Errorf("failed to remove state: %w", err)
 	}
@@ -1141,7 +1583,9 @@ func formatTime(t time.Time) string {
 // State persistence
 
 func loadState() (*State, error) {
-	data, err := os.ReadFile(filepath.Join(stateDir, stateFile))
+	// Try current directory first
+	statePath := filepath.Join(stateDir, stateFile)
+	data, err := os.ReadFile(statePath)
 	if err != nil {
 		return nil, err
 	}
@@ -1153,14 +1597,31 @@ func loadState() (*State, error) {
 }
 
 func saveState(state *State) error {
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
+	// Always save to OriginalWorkdir if set, otherwise current directory
+	baseDir := ""
+	if state.OriginalWorkdir != "" {
+		baseDir = state.OriginalWorkdir
+	}
+	return saveStateTo(state, baseDir)
+}
+
+// saveStateTo saves state to a specific base directory.
+func saveStateTo(state *State, baseDir string) error {
+	var statePath string
+	if baseDir != "" {
+		statePath = filepath.Join(baseDir, stateDir)
+	} else {
+		statePath = stateDir
+	}
+
+	if err := os.MkdirAll(statePath, 0755); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(stateDir, stateFile), data, 0644)
+	return os.WriteFile(filepath.Join(statePath, stateFile), data, 0644)
 }
 
 func outputJSON(v any) error {
