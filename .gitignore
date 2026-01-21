@@ -36,3 +36,6 @@ bin/
 
 # Iter session state (runtime artifacts)
 .iter/
+
+# Claude working dir
+.claude/workdir

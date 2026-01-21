@@ -10,17 +10,6 @@
           }
         ]
       }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Write|Edit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "echo '{\"continue\": true, \"systemMessage\": \"File modified. Remember to run /iter-validate after completing the current step.\"}'"
-          }
-        ]
-      }
     ]
   }
 }

@@ -1,92 +1,104 @@
 #!/bin/bash
-# Build iter plugin from source
-#
-# This script builds the iter binary for the plugin.
+# Build iter plugin as a local marketplace for persistent installation
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+MARKETPLACE_NAME="iter-local"
 
-echo "Building iter plugin..."
-echo "Project directory: $PROJECT_DIR"
+echo "Building iter plugin (marketplace format)..."
 
-# Check Go is installed
+# Check Go
 if ! command -v go &> /dev/null; then
-    echo "Error: Go is not installed. Please install Go 1.22+ first."
-    echo "Download from: https://go.dev/dl/"
+    echo "Error: Go is not installed. Install Go 1.22+ from https://go.dev/dl/"
     exit 1
 fi
 
-# Check Go version
-GO_VERSION=$(go version | grep -oP 'go\K[0-9]+\.[0-9]+')
-GO_MAJOR=$(echo "$GO_VERSION" | cut -d. -f1)
-GO_MINOR=$(echo "$GO_VERSION" | cut -d. -f2)
+# Create marketplace structure:
+#   bin/
+#   ├── .claude-plugin/marketplace.json
+#   └── plugins/iter/
+#       ├── .claude-plugin/plugin.json
+#       ├── commands/
+#       ├── hooks/
+#       └── iter (binary)
+rm -rf "$PROJECT_DIR/bin"
+mkdir -p "$PROJECT_DIR/bin/.claude-plugin"
+mkdir -p "$PROJECT_DIR/bin/plugins/iter/.claude-plugin"
+mkdir -p "$PROJECT_DIR/bin/plugins/iter/commands"
+mkdir -p "$PROJECT_DIR/bin/plugins/iter/hooks"
 
-if [ "$GO_MAJOR" -lt 1 ] || ([ "$GO_MAJOR" -eq 1 ] && [ "$GO_MINOR" -lt 22 ]); then
-    echo "Error: Go 1.22+ is required. Found: go$GO_VERSION"
-    exit 1
-fi
-
-echo "Found Go version: $GO_VERSION"
-
-# Create bin directory structure
-mkdir -p "$PROJECT_DIR/bin"
-mkdir -p "$PROJECT_DIR/bin/commands"
-mkdir -p "$PROJECT_DIR/bin/hooks"
-mkdir -p "$PROJECT_DIR/bin/plugin-skills"
-
-# Download dependencies
-echo "Downloading dependencies..."
+# Build binary
+echo "Compiling binary..."
 cd "$PROJECT_DIR"
 go mod download
+go build -o "$PROJECT_DIR/bin/plugins/iter/iter" "$PROJECT_DIR/cmd/iter"
+chmod +x "$PROJECT_DIR/bin/plugins/iter/iter"
 
-# Build the iter binary
-echo "Building iter binary..."
-go build -o "$PROJECT_DIR/bin/iter" "$PROJECT_DIR/cmd/iter"
-
-# Verify the binary was created
-if [ ! -f "$PROJECT_DIR/bin/iter" ]; then
-    echo "Error: Failed to build iter binary"
-    exit 1
-fi
-
-# Make binary executable
-chmod +x "$PROJECT_DIR/bin/iter"
+# Create marketplace manifest
+cat > "$PROJECT_DIR/bin/.claude-plugin/marketplace.json" << 'EOF'
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "iter-local",
+  "description": "Local marketplace for Iter - adversarial iterative implementation plugin",
+  "owner": {
+    "name": "ternarybob"
+  },
+  "plugins": [
+    {
+      "name": "iter",
+      "description": "Adversarial iterative implementation - structured loop until requirements/tests pass",
+      "version": "2.0.0",
+      "author": {
+        "name": "ternarybob"
+      },
+      "source": "./plugins/iter",
+      "category": "development",
+      "homepage": "https://github.com/ternarybob/iter"
+    }
+  ]
+}
+EOF
 
 # Copy plugin manifest
-echo "Copying plugin files..."
-cp "$PROJECT_DIR/.claude-plugin/plugin.json" "$PROJECT_DIR/bin/plugin.json"
+cp "$PROJECT_DIR/.claude-plugin/plugin.json" "$PROJECT_DIR/bin/plugins/iter/.claude-plugin/plugin.json"
 
-# Copy commands
-cp "$PROJECT_DIR/commands/"*.md "$PROJECT_DIR/bin/commands/"
+# Copy command stubs
+cp "$PROJECT_DIR/commands/iter.md" "$PROJECT_DIR/bin/plugins/iter/commands/"
+cp "$PROJECT_DIR/commands/iter-workflow.md" "$PROJECT_DIR/bin/plugins/iter/commands/"
 
-# Copy plugin-skills
-if [ -d "$PROJECT_DIR/plugin-skills" ] && ls "$PROJECT_DIR/plugin-skills/"*.md 1>/dev/null 2>&1; then
-    cp "$PROJECT_DIR/plugin-skills/"*.md "$PROJECT_DIR/bin/plugin-skills/"
-fi
-
-# Copy hooks and adjust binary path (bin/ is now the plugin root, so iter is at root)
+# Copy hooks (adjust path: binary is at plugin root)
 sed 's|\${CLAUDE_PLUGIN_ROOT}/bin/iter|\${CLAUDE_PLUGIN_ROOT}/iter|g' \
-    "$PROJECT_DIR/hooks/hooks.json" > "$PROJECT_DIR/bin/hooks/hooks.json"
+    "$PROJECT_DIR/hooks/hooks.json" > "$PROJECT_DIR/bin/plugins/iter/hooks/hooks.json"
 
-# Verify the binary works
+# Verify binary
 echo "Verifying build..."
-"$PROJECT_DIR/bin/iter" help > /dev/null 2>&1 || {
-    echo "Error: iter binary failed to run"
+"$PROJECT_DIR/bin/plugins/iter/iter" help > /dev/null 2>&1 || {
+    echo "Error: binary verification failed"
     exit 1
 }
 
+# Validate marketplace
+echo "Validating marketplace..."
+if command -v claude &> /dev/null; then
+    claude plugin validate "$PROJECT_DIR/bin" 2>/dev/null || true
+fi
+
 echo ""
-echo "Build complete!"
+echo "Build complete: $PROJECT_DIR/bin/"
 echo ""
-echo "Plugin built at: $PROJECT_DIR/bin/"
+echo "Marketplace structure:"
+find "$PROJECT_DIR/bin" -type f | sed "s|$PROJECT_DIR/||" | sort
 echo ""
-echo "Contents:"
-ls -la "$PROJECT_DIR/bin/"
+echo "Installation:"
+echo "  1. Add marketplace:  claude plugin marketplace add $PROJECT_DIR/bin"
+echo "  2. Install plugin:   claude plugin install iter@$MARKETPLACE_NAME"
 echo ""
-echo "To use the iter plugin with Claude Code:"
-echo "  claude --plugin-dir $PROJECT_DIR/bin"
+echo "Management:"
+echo "  - Update:    claude plugin update iter@$MARKETPLACE_NAME"
+echo "  - Uninstall: claude plugin uninstall iter@$MARKETPLACE_NAME"
+echo "  - Disable:   claude plugin disable iter@$MARKETPLACE_NAME"
 echo ""
-echo "Or add to your claude config:"
-echo "  {\"pluginDirs\": [\"$PROJECT_DIR/bin\"]}"
+echo "For development (no install needed):"
+echo "  claude --plugin-dir $PROJECT_DIR/bin/plugins/iter"

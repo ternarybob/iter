@@ -1,153 +1,129 @@
 # Iter
 
-**Iter** (Latin: "journey, path") is a **Claude Code plugin** that implements an adversarial multi-agent DevOps loop.
-
-It provides a rigorous Architect → Worker → Validator feedback cycle for complex development tasks, with the Validator taking an adversarial stance (default: REJECT) to ensure correctness.
+**Iter** is a Claude Code plugin for adversarial iterative implementation. It provides a structured loop that iterates until requirements and tests pass.
 
 ## Features
 
-- **Claude Code Plugin**: Integrates directly with Claude Code via hooks and slash commands
-- **Adversarial Validation**: Multi-agent architecture with hostile review (default REJECT)
-- **Go-Powered CLI**: State management and prompt generation via compiled Go binary
-- **Correctness over Speed**: Requirements are law, validation is mandatory
-- **Self-Referential Loop**: Stop hook creates continuous improvement cycle
+- **Self-contained binary**: All prompts and logic embedded in Go binary
+- **Adversarial validation**: Default stance is REJECT - find problems
+- **Structured iteration**: Architect → Worker → Validator loop
+- **Exit blocking**: Session continues until complete or max iterations
 
-## Quick Start
+## Installation
+
+### Prerequisites
+
+- Go 1.22+
+- Claude Code CLI
+
+### Build
 
 ```bash
-# Clone the repository
-git clone https://github.com/ternarybob/iter.git
-cd iter
-
-# Build the plugin binary
 ./scripts/build.sh
-
-# Use with Claude Code
-claude --plugin-dir /path/to/iter
-
-# Start an adversarial loop
-/iter-loop "Add a health check endpoint to the API"
 ```
 
-## Prerequisites
+### Install (Persistent)
 
-- **Go 1.22+** - [Download Go](https://go.dev/dl/)
+The build creates a local marketplace. Install with:
 
-## Plugin Commands
+```bash
+# Add the local marketplace (one-time)
+claude plugin marketplace add /path/to/iter/bin
+
+# Install the plugin
+claude plugin install iter@iter-local
+```
+
+### Plugin Management
+
+```bash
+# Update after rebuilding
+claude plugin update iter@iter-local
+
+# Uninstall
+claude plugin uninstall iter@iter-local
+
+# Disable/enable without uninstalling
+claude plugin disable iter@iter-local
+claude plugin enable iter@iter-local
+```
+
+### Development Mode
+
+For development without installing:
+
+```bash
+claude --plugin-dir /path/to/iter/bin/plugins/iter
+```
+
+## Commands
 
 | Command | Description |
 |---------|-------------|
-| `/iter-loop "<task>"` | Start an adversarial multi-agent loop |
-| `/iter-analyze` | Run architect analysis |
-| `/iter-validate` | Run validator review (adversarial) |
-| `/iter-step [N]` | Get step instructions |
-| `/iter-status` | Show session status |
-| `/iter-next` | Move to next step |
-| `/iter-complete` | Mark session complete |
-| `/iter-reset` | Reset session |
+| `/iter "<task>"` | Start iterative implementation |
+| `/iter-workflow "<spec>"` | Start workflow-based implementation |
 
-## Multi-Agent Architecture
+## How It Works
 
 ```
-┌─────────────┐
-│  ARCHITECT  │ ─── Analyzes requirements, creates step documents
-└──────┬──────┘
-       │
-       ▼
-┌─────────────┐
-│   WORKER    │ ─── Implements step exactly (you, via Claude Code)
-└──────┬──────┘
-       │
-       ▼
-┌─────────────┐     ┌─────────┐
-│  VALIDATOR  │ ──► │ REJECT  │ ──► Back to WORKER (fix issues)
-└──────┬──────┘     └─────────┘
-       │
-       ▼ (PASS)
-┌─────────────┐
-│  Next Step  │ ──► Repeat until all steps done
-└─────────────┘
+/iter "Add health check endpoint"
+         │
+         ▼
+┌─────────────────┐
+│    ARCHITECT    │  Analyze codebase, create step documents
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│     WORKER      │  Implement step exactly as specified
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐     ┌────────┐
+│    VALIDATOR    │────►│ REJECT │──► Back to WORKER
+└────────┬────────┘     └────────┘
+         │
+         ▼ (PASS)
+   Next step or COMPLETE
 ```
 
-| Agent | Role | Stance |
-|-------|------|--------|
-| **ARCHITECT** | Analyze requirements, create step docs | Thorough, comprehensive |
-| **WORKER** | Implement steps exactly as specified | Follow spec precisely |
-| **VALIDATOR** | Review implementation against requirements | **HOSTILE - default REJECT** |
+The Validator assumes ALL implementations are wrong until proven correct:
 
-## Adversarial Validation
+**Auto-reject**: Build fails, tests fail, requirements not traced, dead code remains
+**Pass**: ALL checks verified, build passes, tests pass, cleanup complete
 
-The Validator assumes ALL implementations are incorrect until proven otherwise:
+## Session Artifacts
 
-**Auto-reject conditions:**
-- Build fails
-- Tests fail
-- Requirements not traceable to code
-- Dead code left behind
-- Missing cleanup as specified
-
-**Pass conditions (ALL must be true):**
-- ALL requirements verified with code references
-- Build passes
-- Tests pass
-- No dead code
-- Cleanup verified
-
-## Workdir Artifacts
-
-Each execution creates artifacts in `.iter/workdir/`:
+Created in `.iter/workdir/`:
 
 | File | Purpose |
 |------|---------|
-| `requirements.md` | Extracted requirements |
-| `architect-analysis.md` | Patterns, decisions |
+| `requirements.md` | Extracted requirements (R1, R2...) |
 | `step_N.md` | Step specifications |
 | `step_N_impl.md` | Implementation notes |
-| `step_N_valid.md` | Validation results |
-| `summary.md` | **MANDATORY** completion summary |
+| `summary.md` | Completion summary |
 
 ## Project Structure
 
 ```
-github.com/ternarybob/iter/
-├── .claude-plugin/
-│   └── plugin.json         # Plugin manifest
-├── commands/               # Slash commands
-│   ├── iter-loop.md
-│   ├── iter-analyze.md
-│   ├── iter-validate.md
-│   └── ...
-├── hooks/
-│   └── hooks.json          # Stop hook configuration
-├── plugin-skills/
-│   └── adversarial-devops.md
-├── cmd/iter/
-│   └── main.go             # CLI binary source
-├── bin/
-│   └── iter                # Compiled binary
-└── scripts/
-    └── build.sh            # Build script
-```
-
-## Development
-
-### Building
-
-```bash
-# Build the binary
-./scripts/build.sh
-
-# Or build manually
-go build -o bin/iter ./cmd/iter
-```
-
-### Testing the Plugin
-
-```bash
-# Use with Claude Code
-claude --plugin-dir /path/to/iter
+iter/
+├── .claude-plugin/plugin.json   # Plugin manifest (source)
+├── commands/                    # Command stubs (source)
+│   ├── iter.md
+│   └── iter-workflow.md
+├── hooks/hooks.json             # Stop hook (source)
+├── cmd/iter/main.go             # Binary source (all logic here)
+├── scripts/build.sh             # Build script
+└── bin/                         # Build output (marketplace format)
+    ├── .claude-plugin/
+    │   └── marketplace.json     # Marketplace manifest
+    └── plugins/iter/            # Plugin package
+        ├── .claude-plugin/plugin.json
+        ├── commands/
+        ├── hooks/
+        └── iter                 # Compiled binary
 ```
 
 ## License
 
-MIT License - see [LICENSE](LICENSE)
+MIT

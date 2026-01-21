@@ -1,21 +1,20 @@
 // Package main provides the CLI entry point for the iter Claude Code plugin.
 //
 // iter is an adversarial multi-agent DevOps loop that runs within Claude Code.
-// It implements an Architect -> Worker -> Validator feedback cycle where:
-//   - Architect: Analyzes requirements and creates step documents
-//   - Worker: Implements steps exactly as specified (Claude Code)
-//   - Validator: Adversarially reviews implementations (default REJECT)
+// It implements a structured iterative approach where work is planned, executed,
+// and validated until requirements/tests are achieved.
 //
 // Usage:
 //
-//	iter init "<task>" [--max-iterations N]  - Start a new iter session
-//	iter check                               - Check if work is complete (for stop hook)
-//	iter analyze                             - Run architect analysis
-//	iter validate                            - Run validator on current work
-//	iter status                              - Show current iteration status
-//	iter step [N]                            - Get current/specific step instructions
-//	iter complete                            - Mark session as complete
-//	iter reset                               - Reset session state
+//	iter run "<task>"                  - Start iterative implementation
+//	iter workflow "<spec>"             - Start workflow-based implementation
+//	iter status                        - Show current session status
+//	iter pass                          - Record validation pass
+//	iter reject "<reason>"             - Record validation rejection
+//	iter next                          - Move to next step
+//	iter complete                      - Mark session complete
+//	iter reset                         - Reset session state
+//	iter hook-stop                     - Stop hook handler (JSON output)
 package main
 
 import (
@@ -23,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -31,14 +31,151 @@ import (
 const (
 	stateDir  = ".iter"
 	stateFile = "state.json"
+	version   = "2.0.0"
 )
+
+// Embedded prompts - all prompt content lives here in the binary
+var prompts = struct {
+	SystemRules     string
+	ArchitectRole   string
+	WorkerRole      string
+	ValidatorRole   string
+	WorkflowSystem  string
+	ValidationRules string
+}{
+	SystemRules: `## EXECUTION RULES
+
+These rules are NON-NEGOTIABLE:
+
+1. **CORRECTNESS OVER SPEED** - Never rush. Quality is mandatory.
+2. **REQUIREMENTS ARE LAW** - No interpretation, no deviation, no "improvements"
+3. **EXISTING PATTERNS ARE LAW** - Match codebase style exactly
+4. **BUILD MUST PASS** - Verify after every change
+5. **CLEANUP IS MANDATORY** - Remove dead code, no orphaned artifacts
+6. **TESTS MUST PASS** - All existing tests, plus new tests for new code`,
+
+	ArchitectRole: `## ARCHITECT PHASE
+
+You are analyzing requirements and creating an implementation plan.
+
+### Instructions
+1. **Analyze Codebase First**: Examine existing patterns, conventions, architecture
+2. **Extract Requirements**: List ALL explicit and implicit requirements
+3. **Identify Cleanup**: Find dead code, redundant patterns, technical debt
+4. **Create Step Plan**: Break work into discrete, verifiable steps
+
+### Output Files (create in .iter/workdir/)
+
+**requirements.md**
+- Unique IDs: R1, R2, R3...
+- Priority: MUST | SHOULD | MAY
+- Include implicit requirements (error handling, tests, docs)
+
+**step_N.md** (one per step)
+- Title: Brief description
+- Requirements: Which R-IDs this addresses
+- Approach: Detailed implementation plan
+- Cleanup: Dead code to remove
+- Acceptance: How to verify completion
+
+**architect-analysis.md**
+- Patterns found in codebase
+- Architectural decisions made
+- Risk assessment`,
+
+	WorkerRole: `## WORKER PHASE
+
+You are implementing the current step exactly as specified.
+
+### CRITICAL RULES
+- Follow step document EXACTLY - no interpretation
+- Make ONLY the changes specified
+- Verify build passes after each change
+- Perform ALL cleanup listed in step doc
+- Document what you did in step_N_impl.md
+
+### Workflow
+1. Read .iter/workdir/step_N.md
+2. Implement exactly as specified
+3. Run build verification
+4. Create step_N_impl.md with summary
+5. Request validation`,
+
+	ValidatorRole: `## VALIDATOR PHASE
+
+**DEFAULT STANCE: REJECT**
+
+Your job is to find problems. Assume implementation is wrong until proven correct.
+
+### Validation Checklist
+
+**1. BUILD VERIFICATION** (AUTO-REJECT if fails)
+- Run build command
+- Run tests
+- Run linter
+
+**2. REQUIREMENTS TRACEABILITY** (AUTO-REJECT if missing)
+- Every change must trace to a requirement
+- Every requirement for this step must be implemented
+
+**3. CODE QUALITY**
+- Changes match existing patterns
+- Error handling is complete
+- No debug code left behind
+- Proper logging (not print statements)
+
+**4. CLEANUP VERIFICATION**
+- All cleanup items addressed
+- No new dead code introduced
+- No orphaned files
+
+**5. STEP COMPLETION**
+- All acceptance criteria met
+- Changes are minimal and focused
+- No scope creep
+
+### Verdict
+After review, call:
+- 'iter pass' - ALL checks pass
+- 'iter reject "specific reason"' - ANY check fails`,
+
+	WorkflowSystem: `## WORKFLOW MODE
+
+You are executing a custom workflow specification.
+
+The workflow defines:
+- Phases/stages to execute
+- Success criteria for each phase
+- Iteration rules
+
+Parse the workflow spec and execute each phase in order.
+Track progress and iterate until all success criteria are met.`,
+
+	ValidationRules: `### Auto-Reject Conditions
+- Build fails
+- Tests fail
+- Lint errors
+- Missing requirement traceability
+- Dead code not cleaned up
+- Acceptance criteria not met
+
+### Pass Conditions
+- ALL checklist items verified
+- Build passes
+- Tests pass
+- Requirements traced
+- Cleanup complete`,
+}
 
 // State represents the persistent state of an iter session.
 type State struct {
 	Task           string    `json:"task"`
+	Mode           string    `json:"mode"` // "iter" or "workflow"
+	WorkflowSpec   string    `json:"workflow_spec,omitempty"`
+	Workdir        string    `json:"workdir"`
 	MaxIterations  int       `json:"max_iterations"`
 	Iteration      int       `json:"iteration"`
-	Phase          string    `json:"phase"` // init, architect, worker, validator, complete
+	Phase          string    `json:"phase"` // architect, worker, validator, complete
 	CurrentStep    int       `json:"current_step"`
 	TotalSteps     int       `json:"total_steps"`
 	StartedAt      time.Time `json:"started_at"`
@@ -87,30 +224,28 @@ func main() {
 
 	var err error
 	switch cmd {
-	case "init":
-		err = cmdInit(args)
-	case "check":
-		err = cmdCheck(args)
-	case "analyze":
-		err = cmdAnalyze(args)
-	case "validate":
-		err = cmdValidate(args)
+	case "run":
+		err = cmdRun(args)
+	case "workflow":
+		err = cmdWorkflow(args)
 	case "status":
 		err = cmdStatus(args)
 	case "step":
 		err = cmdStep(args)
+	case "pass":
+		err = cmdPass(args)
+	case "reject":
+		err = cmdReject(args)
+	case "next":
+		err = cmdNext(args)
 	case "complete":
 		err = cmdComplete(args)
 	case "reset":
 		err = cmdReset(args)
-	case "reject":
-		err = cmdReject(args)
-	case "pass":
-		err = cmdPass(args)
-	case "next":
-		err = cmdNext(args)
 	case "hook-stop":
 		err = cmdHookStop(args)
+	case "version", "-v", "--version":
+		cmdVersion()
 	case "help", "-h", "--help":
 		printUsage()
 	default:
@@ -126,41 +261,87 @@ func main() {
 }
 
 func printUsage() {
-	fmt.Println(`iter - Adversarial multi-agent DevOps loop for Claude Code
+	fmt.Println(`iter - Adversarial iterative implementation for Claude Code
 
 Commands:
-  init "<task>" [--max-iterations N]  Start a new iter session
-  check                               Check if work is complete (for stop hook)
-  analyze                             Output architect analysis prompt
-  validate                            Output validator review prompt
-  status                              Show current iteration status
-  step [N]                            Get current/specific step instructions
-  complete                            Mark session as complete
-  reset                               Reset session state
-  reject "<reason>"                   Record a validation rejection
-  pass                                Record a validation pass
-  next                                Move to next step
-  hook-stop                           Stop hook handler (outputs JSON)
-  help                                Show this help
+  run "<task>"           Start iterative implementation until requirements/tests pass
+  workflow "<spec>"      Start workflow-based implementation
+  status                 Show current session status
+  step [N]               Show current/specific step instructions
+  pass                   Record validation pass
+  reject "<reason>"      Record validation rejection
+  next                   Move to next step
+  complete               Mark session complete
+  reset                  Reset session state
+  hook-stop              Stop hook handler (JSON output)
+  version                Show version
+  help                   Show this help
 
-The iter plugin creates an adversarial feedback loop:
-  1. /iter-loop starts the session
-  2. Architect analyzes and creates step documents
-  3. Worker (Claude Code) implements each step
-  4. Validator reviews with adversarial stance (default REJECT)
-  5. Loop continues until all steps pass or max iterations reached`)
+The iter loop:
+  1. ARCHITECT: Analyze requirements, create step documents
+  2. WORKER: Implement each step exactly as specified
+  3. VALIDATOR: Review with adversarial stance (default REJECT)
+  4. Loop until all steps pass or max iterations reached`)
 }
 
-// cmdInit initializes a new iter session.
-func cmdInit(args []string) error {
+func cmdVersion() {
+	fmt.Printf("iter version %s\n", version)
+}
+
+// summarizeTask creates a short slug from a task description.
+// It extracts the first few meaningful words, converts to lowercase,
+// and uses hyphens as separators.
+func summarizeTask(task string) string {
+	// Convert to lowercase
+	s := strings.ToLower(task)
+
+	// Replace newlines and multiple spaces with single space
+	s = regexp.MustCompile(`[\r\n]+`).ReplaceAllString(s, " ")
+	s = regexp.MustCompile(`\s+`).ReplaceAllString(s, " ")
+	s = strings.TrimSpace(s)
+
+	// Extract words (alphanumeric only)
+	words := regexp.MustCompile(`[a-z0-9]+`).FindAllString(s, -1)
+
+	// Take first 5 words max
+	if len(words) > 5 {
+		words = words[:5]
+	}
+
+	// Join with hyphens
+	slug := strings.Join(words, "-")
+
+	// Truncate to 40 chars max
+	if len(slug) > 40 {
+		slug = slug[:40]
+		// Don't end with a hyphen
+		slug = strings.TrimSuffix(slug, "-")
+	}
+
+	// Fallback if empty
+	if slug == "" {
+		slug = "task"
+	}
+
+	return slug
+}
+
+// generateWorkdirPath creates a unique workdir path from a task.
+func generateWorkdirPath(task string) string {
+	slug := summarizeTask(task)
+	timestamp := time.Now().Format("20060102-03-04")
+	return filepath.Join(stateDir, "workdir", fmt.Sprintf("%s-%s", slug, timestamp))
+}
+
+// cmdRun starts an iterative implementation session.
+func cmdRun(args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: iter init \"<task>\" [--max-iterations N]")
+		return fmt.Errorf("usage: iter run \"<task>\" [--max-iterations N]")
 	}
 
 	task := args[0]
-	maxIterations := 50 // default
+	maxIterations := 50
 
-	// Parse optional flags
 	for i := 1; i < len(args); i++ {
 		if args[i] == "--max-iterations" && i+1 < len(args) {
 			n, err := strconv.Atoi(args[i+1])
@@ -172,12 +353,18 @@ func cmdInit(args []string) error {
 		}
 	}
 
+	// Generate unique workdir path
+	workdir := generateWorkdirPath(task)
+
+	// Initialize state
 	state := &State{
 		Task:           task,
+		Mode:           "iter",
+		Workdir:        workdir,
 		MaxIterations:  maxIterations,
-		Iteration:      0,
+		Iteration:      1,
 		Phase:          "architect",
-		CurrentStep:    0,
+		CurrentStep:    1,
 		TotalSteps:     0,
 		StartedAt:      time.Now(),
 		LastActivityAt: time.Now(),
@@ -185,171 +372,139 @@ func cmdInit(args []string) error {
 		Verdicts:       []Verdict{},
 	}
 
+	// Create workdir
+	if err := os.MkdirAll(workdir, 0755); err != nil {
+		return fmt.Errorf("failed to create workdir: %w", err)
+	}
+
 	if err := saveState(state); err != nil {
 		return fmt.Errorf("failed to save state: %w", err)
 	}
 
-	fmt.Printf("Iter session initialized\n")
-	fmt.Printf("Task: %s\n", task)
-	fmt.Printf("Max iterations: %d\n", maxIterations)
-	fmt.Printf("Phase: architect\n")
-	fmt.Printf("\nRun /iter-analyze to begin architect analysis.\n")
-
-	return nil
-}
-
-// cmdCheck checks if the work is complete (for stop hook).
-func cmdCheck(args []string) error {
-	state, err := loadState()
-	if err != nil {
-		// No state = not in an iter session
-		fmt.Println("NOT_ITER_SESSION")
-		return nil
-	}
-
-	if state.Completed {
-		fmt.Println("COMPLETE")
-		return nil
-	}
-
-	if state.Iteration >= state.MaxIterations {
-		fmt.Println("MAX_ITERATIONS")
-		return nil
-	}
-
-	fmt.Println("CONTINUE")
-	return nil
-}
-
-// cmdAnalyze outputs the architect analysis prompt.
-func cmdAnalyze(args []string) error {
-	state, err := loadState()
-	if err != nil {
-		return fmt.Errorf("no active iter session (run 'iter init' first)")
-	}
-
-	state.Phase = "architect"
-	state.Iteration++
-	state.LastActivityAt = time.Now()
-	if err := saveState(state); err != nil {
-		return fmt.Errorf("failed to save state: %w", err)
-	}
-
-	prompt := fmt.Sprintf(`# ARCHITECT ANALYSIS
-
-You are the ARCHITECT agent in an adversarial multi-agent system.
+	// Output the full iterative implementation prompt
+	fmt.Printf(`# ITERATIVE IMPLEMENTATION
 
 ## Task
 %s
 
-## Your Role
-Analyze the requirements and create a detailed implementation plan.
+%s
 
-## Instructions
-1. **Analyze Existing Patterns**: Before planning, examine the codebase for existing patterns, conventions, and architecture
-2. **Create Requirements Document**: List all explicit and implicit requirements
-3. **Identify Cleanup Targets**: Find any dead code, redundant patterns, or technical debt to address
-4. **Create Step Documents**: Break the work into discrete, verifiable steps
+%s
 
-## Output Format
-Create the following files in .iter/workdir/:
+---
 
-### requirements.md
-- List all requirements with unique IDs (R1, R2, etc.)
-- Mark requirements as MUST, SHOULD, or MAY
-- Include implicit requirements (error handling, testing, etc.)
+## PHASE: ARCHITECT
 
-### step_1.md, step_2.md, etc.
-For each step, include:
-- **Title**: Brief description
-- **Dependencies**: Which steps must complete first
-- **Requirements**: Which requirements this step addresses (R1, R2, etc.)
-- **Approach**: Detailed implementation approach
-- **Cleanup**: Any dead code or redundancy to remove
-- **Acceptance Criteria**: How to verify the step is complete
+Begin by analyzing the codebase and creating your implementation plan.
 
-### architect-analysis.md
-- Existing patterns found
-- Architectural decisions
-- Risk assessment
-- Total steps planned
+%s
 
-## Constraints
-- Steps must be independently verifiable
-- Each step must trace to at least one requirement
-- Cleanup is MANDATORY - identify and remove dead code
-- Build must pass after each step
+---
 
-Iteration: %d/%d`, state.Task, state.Iteration, state.MaxIterations)
+## Session Info
+- Iteration: %d/%d
+- State: .iter/state.json
+- Artifacts: %s/
 
-	fmt.Println(prompt)
+## Next Steps
+1. Create requirements.md, step_N.md files, architect-analysis.md
+2. Set total steps: Update .iter/state.json "total_steps" field
+3. Then implementation begins automatically
+
+The session will continue until all steps pass validation or max iterations reached.
+Exit is blocked until completion - use 'iter complete' when done or 'iter reset' to abort.
+`,
+		task,
+		prompts.SystemRules,
+		prompts.ValidationRules,
+		prompts.ArchitectRole,
+		state.Iteration, state.MaxIterations, state.Workdir)
+
 	return nil
 }
 
-// cmdValidate outputs the validator review prompt.
-func cmdValidate(args []string) error {
-	state, err := loadState()
-	if err != nil {
-		return fmt.Errorf("no active iter session (run 'iter init' first)")
+// cmdWorkflow starts a workflow-based implementation session.
+func cmdWorkflow(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: iter workflow \"<workflow-spec>\"")
 	}
 
-	state.Phase = "validator"
-	state.ValidationPass++
-	state.LastActivityAt = time.Now()
+	spec := args[0]
+	maxIterations := 50
+
+	for i := 1; i < len(args); i++ {
+		if args[i] == "--max-iterations" && i+1 < len(args) {
+			n, err := strconv.Atoi(args[i+1])
+			if err != nil {
+				return fmt.Errorf("invalid max-iterations: %w", err)
+			}
+			maxIterations = n
+			i++
+		}
+	}
+
+	// Generate unique workdir path
+	workdir := generateWorkdirPath(spec)
+
+	state := &State{
+		Task:           "Workflow execution",
+		Mode:           "workflow",
+		WorkflowSpec:   spec,
+		Workdir:        workdir,
+		MaxIterations:  maxIterations,
+		Iteration:      1,
+		Phase:          "architect",
+		CurrentStep:    1,
+		StartedAt:      time.Now(),
+		LastActivityAt: time.Now(),
+		Artifacts:      []string{},
+		Verdicts:       []Verdict{},
+	}
+
+	if err := os.MkdirAll(workdir, 0755); err != nil {
+		return fmt.Errorf("failed to create workdir: %w", err)
+	}
+
 	if err := saveState(state); err != nil {
 		return fmt.Errorf("failed to save state: %w", err)
 	}
 
-	prompt := fmt.Sprintf(`# VALIDATOR REVIEW
+	fmt.Printf(`# WORKFLOW EXECUTION
 
-You are the VALIDATOR agent in an adversarial multi-agent system.
-
-## DEFAULT STANCE: REJECT
-
-Your job is to find problems. Assume the implementation is wrong until proven correct.
-
-## Task Being Validated
 %s
 
-## Current Step: %d
+%s
 
-## Validation Checklist
+---
 
-### 1. Build Verification
-- [ ] Run 'go build ./...' - AUTO-REJECT if it fails
-- [ ] Run 'go test ./...' - AUTO-REJECT if tests fail
-- [ ] Run 'golangci-lint run' - AUTO-REJECT on lint errors
+## Workflow Specification
+%s
 
-### 2. Requirements Traceability
-- [ ] Every change must trace to a requirement in requirements.md
-- [ ] AUTO-REJECT if any change lacks requirement traceability
-- [ ] Verify each requirement marked for this step is actually implemented
+---
 
-### 3. Code Quality
-- [ ] Changes match existing codebase patterns
-- [ ] Error handling is complete (no ignored errors)
-- [ ] No fmt.Println (use slog)
-- [ ] Proper error wrapping with context
+%s
 
-### 4. Cleanup Verification
-- [ ] All cleanup items from step doc are addressed
-- [ ] No new dead code introduced
-- [ ] No redundant patterns
+## Instructions
+1. Parse the workflow specification above
+2. Identify phases/stages and success criteria
+3. Execute each phase, validating success criteria
+4. Iterate until all criteria are met
 
-### 5. Step Completion
-- [ ] All acceptance criteria from step doc are met
-- [ ] Changes are minimal and focused
-- [ ] No scope creep beyond step requirements
+## Session Info
+- Iteration: %d/%d
+- State: .iter/state.json
+- Artifacts: %s/
 
-## Output
-After review, run one of:
-- 'iter pass' - If ALL checks pass
-- 'iter reject "reason"' - If ANY check fails (include specific reason)
+Use 'iter pass'/'iter reject' to record phase outcomes.
+Use 'iter next' to advance phases.
+Use 'iter complete' when workflow is done.
+`,
+		prompts.SystemRules,
+		prompts.ValidationRules,
+		spec,
+		prompts.WorkflowSystem,
+		state.Iteration, state.MaxIterations, state.Workdir)
 
-Validation pass: %d
-Iteration: %d/%d`, state.Task, state.CurrentStep, state.ValidationPass, state.Iteration, state.MaxIterations)
-
-	fmt.Println(prompt)
 	return nil
 }
 
@@ -357,32 +512,37 @@ Iteration: %d/%d`, state.Task, state.CurrentStep, state.ValidationPass, state.It
 func cmdStatus(args []string) error {
 	state, err := loadState()
 	if err != nil {
-		return fmt.Errorf("no active iter session")
+		fmt.Println("No active iter session.")
+		return nil
 	}
 
 	elapsed := time.Since(state.StartedAt).Round(time.Second)
 
-	fmt.Printf("Iter Session Status\n")
-	fmt.Printf("==================\n")
-	fmt.Printf("Task: %s\n", state.Task)
-	fmt.Printf("Phase: %s\n", state.Phase)
-	fmt.Printf("Iteration: %d/%d\n", state.Iteration, state.MaxIterations)
-	fmt.Printf("Current Step: %d/%d\n", state.CurrentStep, state.TotalSteps)
-	fmt.Printf("Validation Pass: %d\n", state.ValidationPass)
-	fmt.Printf("Rejections: %d\n", state.Rejections)
-	fmt.Printf("Elapsed: %s\n", elapsed)
-	fmt.Printf("Completed: %v\n", state.Completed)
+	fmt.Printf(`# Iter Session Status
+
+Task: %s
+Mode: %s
+Phase: %s
+Iteration: %d/%d
+Step: %d/%d
+Validation Pass: %d
+Rejections: %d
+Elapsed: %s
+Completed: %v
+`, state.Task, state.Mode, state.Phase, state.Iteration, state.MaxIterations,
+		state.CurrentStep, state.TotalSteps, state.ValidationPass, state.Rejections,
+		elapsed, state.Completed)
 
 	if len(state.Verdicts) > 0 {
-		fmt.Printf("\nRecent Verdicts:\n")
+		fmt.Println("\n## Recent Verdicts")
 		start := len(state.Verdicts) - 5
 		if start < 0 {
 			start = 0
 		}
 		for _, v := range state.Verdicts[start:] {
-			fmt.Printf("  Step %d Pass %d: %s\n", v.Step, v.Pass, v.Status)
+			fmt.Printf("- Step %d Pass %d: %s\n", v.Step, v.Pass, v.Status)
 			for _, r := range v.Reasons {
-				fmt.Printf("    - %s\n", r)
+				fmt.Printf("  - %s\n", r)
 			}
 		}
 	}
@@ -390,7 +550,7 @@ func cmdStatus(args []string) error {
 	return nil
 }
 
-// cmdStep outputs the current or specified step instructions.
+// cmdStep outputs current or specified step instructions.
 func cmdStep(args []string) error {
 	state, err := loadState()
 	if err != nil {
@@ -406,129 +566,41 @@ func cmdStep(args []string) error {
 		stepNum = n
 	}
 
-	// Read step file if it exists
-	stepFile := filepath.Join(stateDir, "workdir", fmt.Sprintf("step_%d.md", stepNum))
+	// Try to read step file
+	stepFile := filepath.Join(state.Workdir, fmt.Sprintf("step_%d.md", stepNum))
 	content, err := os.ReadFile(stepFile)
+
+	fmt.Printf(`# STEP %d IMPLEMENTATION
+
+%s
+
+---
+
+`, stepNum, prompts.WorkerRole)
+
 	if err != nil {
-		// No step file yet, output worker prompt
-		fmt.Printf(`# WORKER INSTRUCTIONS
+		fmt.Printf(`## Step Document
+No step_%d.md found in .iter/workdir/
 
-You are the WORKER agent in an adversarial multi-agent system.
-
-## CRITICAL RULES
-- Follow step documents EXACTLY - no interpretation
-- No changes beyond what the step specifies
-- Verify build passes after each change
-- Perform all cleanup specified in step doc
-- Write step_%d_impl.md when done
+If architect phase is not complete, create step documents first.
 
 ## Current Task
 %s
 
-## Current Step: %d
-
-Read .iter/workdir/step_%d.md for detailed instructions.
-
-If no step document exists yet, run /iter-analyze first.
-
-Iteration: %d/%d`, stepNum, state.Task, stepNum, stepNum, state.Iteration, state.MaxIterations)
-		return nil
+Iteration: %d/%d
+`, stepNum, state.Task, state.Iteration, state.MaxIterations)
+	} else {
+		fmt.Printf("## Step Document\n\n%s\n", string(content))
 	}
 
-	fmt.Printf("# Step %d Instructions\n\n", stepNum)
-	fmt.Println(string(content))
+	fmt.Printf(`
+---
 
-	return nil
-}
-
-// cmdComplete marks the session as complete.
-func cmdComplete(args []string) error {
-	state, err := loadState()
-	if err != nil {
-		return fmt.Errorf("no active iter session")
-	}
-
-	state.Completed = true
-	state.ExitSignal = true
-	state.Phase = "complete"
-	state.LastActivityAt = time.Now()
-
-	if err := saveState(state); err != nil {
-		return fmt.Errorf("failed to save state: %w", err)
-	}
-
-	// Create summary.md
-	summaryPath := filepath.Join(stateDir, "workdir", "summary.md")
-	summary := fmt.Sprintf(`# Iter Session Summary
-
-## Task
-%s
-
-## Results
-- Total Iterations: %d
-- Steps Completed: %d/%d
-- Rejections: %d
-
-## Verdicts
-`, state.Task, state.Iteration, state.CurrentStep, state.TotalSteps, state.Rejections)
-
-	for _, v := range state.Verdicts {
-		summary += fmt.Sprintf("\n### Step %d Pass %d: %s\n", v.Step, v.Pass, v.Status)
-		for _, r := range v.Reasons {
-			summary += fmt.Sprintf("- %s\n", r)
-		}
-	}
-
-	if err := os.MkdirAll(filepath.Dir(summaryPath), 0755); err != nil {
-		return fmt.Errorf("failed to create workdir: %w", err)
-	}
-	if err := os.WriteFile(summaryPath, []byte(summary), 0644); err != nil {
-		return fmt.Errorf("failed to write summary: %w", err)
-	}
-
-	fmt.Println("Session marked as complete.")
-	fmt.Printf("Summary written to %s\n", summaryPath)
-
-	return nil
-}
-
-// cmdReset resets the session state.
-func cmdReset(args []string) error {
-	if err := os.RemoveAll(stateDir); err != nil {
-		return fmt.Errorf("failed to remove state directory: %w", err)
-	}
-	fmt.Println("Iter session reset.")
-	return nil
-}
-
-// cmdReject records a validation rejection.
-func cmdReject(args []string) error {
-	if len(args) < 1 {
-		return fmt.Errorf("usage: iter reject \"<reason>\"")
-	}
-
-	state, err := loadState()
-	if err != nil {
-		return fmt.Errorf("no active iter session")
-	}
-
-	reason := strings.Join(args, " ")
-	state.Rejections++
-	state.LastActivityAt = time.Now()
-	state.Verdicts = append(state.Verdicts, Verdict{
-		Step:      state.CurrentStep,
-		Pass:      state.ValidationPass,
-		Status:    "reject",
-		Reasons:   []string{reason},
-		Timestamp: time.Now(),
-	})
-
-	if err := saveState(state); err != nil {
-		return fmt.Errorf("failed to save state: %w", err)
-	}
-
-	fmt.Printf("Rejection recorded for step %d (pass %d): %s\n", state.CurrentStep, state.ValidationPass, reason)
-	fmt.Println("\nWorker must address this issue. Run /iter-step to continue.")
+## After Implementation
+1. Verify build passes
+2. Create step_%d_impl.md documenting what you did
+3. Validation will run automatically
+`, stepNum)
 
 	return nil
 }
@@ -553,14 +625,46 @@ func cmdPass(args []string) error {
 		return fmt.Errorf("failed to save state: %w", err)
 	}
 
-	fmt.Printf("Step %d passed validation.\n", state.CurrentStep)
+	fmt.Printf("PASS: Step %d validated successfully.\n", state.CurrentStep)
 
-	// Check if all steps complete
 	if state.CurrentStep >= state.TotalSteps && state.TotalSteps > 0 {
-		fmt.Println("\nAll steps completed! Run /iter-complete to finalize.")
+		fmt.Println("\nAll steps completed. Run 'iter complete' to finalize.")
 	} else {
-		fmt.Println("\nRun /iter-next to proceed to the next step.")
+		fmt.Println("\nRun 'iter next' to proceed to next step.")
 	}
+
+	return nil
+}
+
+// cmdReject records a validation rejection.
+func cmdReject(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: iter reject \"<reason>\"")
+	}
+
+	state, err := loadState()
+	if err != nil {
+		return fmt.Errorf("no active iter session")
+	}
+
+	reason := strings.Join(args, " ")
+	state.Rejections++
+	state.LastActivityAt = time.Now()
+	state.Verdicts = append(state.Verdicts, Verdict{
+		Step:      state.CurrentStep,
+		Pass:      state.ValidationPass,
+		Status:    "reject",
+		Reasons:   []string{reason},
+		Timestamp: time.Now(),
+	})
+	state.Phase = "worker" // Back to worker
+
+	if err := saveState(state); err != nil {
+		return fmt.Errorf("failed to save state: %w", err)
+	}
+
+	fmt.Printf("REJECT: Step %d (pass %d)\nReason: %s\n", state.CurrentStep, state.ValidationPass, reason)
+	fmt.Println("\nFix the issue and validation will run again.")
 
 	return nil
 }
@@ -582,125 +686,201 @@ func cmdNext(args []string) error {
 	}
 
 	fmt.Printf("Moved to step %d.\n", state.CurrentStep)
-	fmt.Println("Run /iter-step to get step instructions.")
+
+	if state.CurrentStep > state.TotalSteps && state.TotalSteps > 0 {
+		fmt.Println("All planned steps complete. Run 'iter complete' to finalize.")
+	}
 
 	return nil
 }
 
-// cmdHookStop handles the stop hook (outputs JSON for Claude Code).
+// cmdComplete marks the session as complete.
+func cmdComplete(args []string) error {
+	state, err := loadState()
+	if err != nil {
+		return fmt.Errorf("no active iter session")
+	}
+
+	state.Completed = true
+	state.ExitSignal = true
+	state.Phase = "complete"
+	state.LastActivityAt = time.Now()
+
+	if err := saveState(state); err != nil {
+		return fmt.Errorf("failed to save state: %w", err)
+	}
+
+	// Create summary
+	summaryPath := filepath.Join(state.Workdir, "summary.md")
+	summary := fmt.Sprintf(`# Iter Session Summary
+
+## Task
+%s
+
+## Results
+- Mode: %s
+- Total Iterations: %d
+- Steps Completed: %d/%d
+- Rejections: %d
+
+## Verdicts
+`, state.Task, state.Mode, state.Iteration, state.CurrentStep, state.TotalSteps, state.Rejections)
+
+	for _, v := range state.Verdicts {
+		summary += fmt.Sprintf("\n### Step %d Pass %d: %s\n", v.Step, v.Pass, v.Status)
+		for _, r := range v.Reasons {
+			summary += fmt.Sprintf("- %s\n", r)
+		}
+	}
+
+	if err := os.WriteFile(summaryPath, []byte(summary), 0644); err != nil {
+		return fmt.Errorf("failed to write summary: %w", err)
+	}
+
+	fmt.Println("Session complete.")
+	fmt.Printf("Summary: %s\n", summaryPath)
+
+	return nil
+}
+
+// cmdReset clears session state.
+func cmdReset(args []string) error {
+	if err := os.RemoveAll(stateDir); err != nil {
+		return fmt.Errorf("failed to remove state: %w", err)
+	}
+	fmt.Println("Iter session reset.")
+	return nil
+}
+
+// cmdHookStop handles the stop hook for Claude Code.
 func cmdHookStop(args []string) error {
 	state, err := loadState()
 	if err != nil {
-		// No iter session - allow normal exit
-		resp := HookResponse{
-			Continue: true,
-		}
-		return outputJSON(resp)
+		// No session - allow exit
+		return outputJSON(HookResponse{Continue: true})
 	}
 
-	// Check completion conditions
 	if state.Completed {
-		resp := HookResponse{
+		return outputJSON(HookResponse{
 			Continue:      true,
-			SystemMessage: "Iter session completed successfully.",
-		}
-		return outputJSON(resp)
+			SystemMessage: "Iter session completed.",
+		})
 	}
 
 	if state.Iteration >= state.MaxIterations {
-		resp := HookResponse{
+		return outputJSON(HookResponse{
 			Continue:      true,
-			SystemMessage: fmt.Sprintf("Iter session reached max iterations (%d).", state.MaxIterations),
-		}
-		return outputJSON(resp)
+			SystemMessage: fmt.Sprintf("Max iterations reached (%d).", state.MaxIterations),
+		})
 	}
 
-	// Continue the loop - inject the next prompt
+	// Continue loop
 	state.Iteration++
 	state.LastActivityAt = time.Now()
 	if err := saveState(state); err != nil {
-		resp := HookResponse{
+		return outputJSON(HookResponse{
 			Continue:      true,
-			SystemMessage: fmt.Sprintf("Warning: failed to save state: %v", err),
-		}
-		return outputJSON(resp)
+			SystemMessage: fmt.Sprintf("Warning: state save failed: %v", err),
+		})
 	}
 
 	var nextPrompt string
 	switch state.Phase {
 	case "architect":
-		nextPrompt = fmt.Sprintf(`Continue iter session (iteration %d/%d).
+		state.Phase = "worker"
+		saveState(state)
+		nextPrompt = fmt.Sprintf(`# CONTINUE: Iteration %d/%d
 
-The Architect has created step documents. Now begin implementation.
+Architect phase complete. Begin implementation.
 
-Run /iter-step to get the current step instructions.
-After implementing, run /iter-validate for adversarial review.`, state.Iteration, state.MaxIterations)
-	case "worker":
-		nextPrompt = fmt.Sprintf(`Continue iter session (iteration %d/%d).
-
-You are the WORKER. Implement step %d exactly as specified.
-
-Run /iter-step to see the instructions.
-After implementing, run /iter-validate for review.`, state.Iteration, state.MaxIterations, state.CurrentStep)
-	case "validator":
-		// Check last verdict
-		if len(state.Verdicts) > 0 {
-			lastVerdict := state.Verdicts[len(state.Verdicts)-1]
-			if lastVerdict.Status == "reject" {
-				nextPrompt = fmt.Sprintf(`Continue iter session (iteration %d/%d).
-
-Step %d was REJECTED by the Validator:
 %s
 
-You are the WORKER. Fix the issues and run /iter-validate again.`,
-					state.Iteration, state.MaxIterations, state.CurrentStep,
-					strings.Join(lastVerdict.Reasons, "\n"))
-			} else {
-				nextPrompt = fmt.Sprintf(`Continue iter session (iteration %d/%d).
+Read .iter/workdir/step_%d.md and implement exactly as specified.
+After implementation, validation runs automatically.`,
+			state.Iteration, state.MaxIterations,
+			prompts.WorkerRole,
+			state.CurrentStep)
 
-Step %d passed validation. Run /iter-next to proceed to the next step.`,
-					state.Iteration, state.MaxIterations, state.CurrentStep)
+	case "worker":
+		state.Phase = "validator"
+		state.ValidationPass++
+		saveState(state)
+		nextPrompt = fmt.Sprintf(`# CONTINUE: Iteration %d/%d
+
+Implementation complete. Running validation.
+
+%s
+
+Review step %d implementation now.
+Call 'iter pass' or 'iter reject "reason"' when done.`,
+			state.Iteration, state.MaxIterations,
+			prompts.ValidatorRole,
+			state.CurrentStep)
+
+	case "validator":
+		if len(state.Verdicts) > 0 {
+			last := state.Verdicts[len(state.Verdicts)-1]
+			if last.Status == "reject" {
+				nextPrompt = fmt.Sprintf(`# CONTINUE: Iteration %d/%d
+
+Step %d was REJECTED:
+%s
+
+%s
+
+Fix the issues and validation will run again.`,
+					state.Iteration, state.MaxIterations,
+					state.CurrentStep,
+					strings.Join(last.Reasons, "\n"),
+					prompts.WorkerRole)
+			} else {
+				nextPrompt = fmt.Sprintf(`# CONTINUE: Iteration %d/%d
+
+Step %d PASSED. Run 'iter next' to proceed.
+
+Current progress: Step %d/%d`,
+					state.Iteration, state.MaxIterations,
+					state.CurrentStep,
+					state.CurrentStep, state.TotalSteps)
 			}
 		} else {
-			nextPrompt = fmt.Sprintf(`Continue iter session (iteration %d/%d).
+			nextPrompt = fmt.Sprintf(`# CONTINUE: Iteration %d/%d
 
-Run /iter-validate to review the current implementation.`, state.Iteration, state.MaxIterations)
+Run validation for step %d.
+
+%s`,
+				state.Iteration, state.MaxIterations,
+				state.CurrentStep,
+				prompts.ValidatorRole)
 		}
+
 	default:
-		nextPrompt = fmt.Sprintf(`Continue iter session (iteration %d/%d).
+		nextPrompt = fmt.Sprintf(`# CONTINUE: Iteration %d/%d
 
-Current phase: %s
-Current step: %d/%d
+Phase: %s | Step: %d/%d
 
-Run /iter-status for full session status.`, state.Iteration, state.MaxIterations, state.Phase, state.CurrentStep, state.TotalSteps)
+Run 'iter status' for session details.`,
+			state.Iteration, state.MaxIterations,
+			state.Phase, state.CurrentStep, state.TotalSteps)
 	}
 
-	resp := HookResponse{
-		Continue:       false, // Block exit
-		SuppressOutput: false,
-		HookSpecificOutput: &HookSpecificOutput{
-			HookEventName:     "Stop",
-			AdditionalContext: nextPrompt,
-		},
-	}
-
-	return outputJSON(resp)
+	return outputJSON(HookResponse{
+		Continue:      false,
+		SystemMessage: nextPrompt,
+	})
 }
 
-// State persistence functions
+// State persistence
 
 func loadState() (*State, error) {
-	path := filepath.Join(stateDir, stateFile)
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(filepath.Join(stateDir, stateFile))
 	if err != nil {
 		return nil, err
 	}
-
 	var state State
 	if err := json.Unmarshal(data, &state); err != nil {
 		return nil, err
 	}
-
 	return &state, nil
 }
 
@@ -708,12 +888,10 @@ func saveState(state *State) error {
 	if err := os.MkdirAll(stateDir, 0755); err != nil {
 		return err
 	}
-
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		return err
 	}
-
 	return os.WriteFile(filepath.Join(stateDir, stateFile), data, 0644)
 }
 

@@ -1,35 +1,33 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code when working with code in this repository.
 
 ## Build Commands
 
 ```bash
-./scripts/build.sh                # Build plugin binary from source
-go build -o bin/iter ./cmd/iter   # Build CLI binary only
+./scripts/build.sh                # Build plugin from source
+go build -o bin/iter ./cmd/iter   # Build binary only
 go test ./cmd/iter/...            # Run tests
 golangci-lint run                 # Lint
 ```
 
 ## Architecture Overview
 
-Iter is a **Claude Code plugin** that implements an adversarial multi-agent DevOps loop.
+Iter is a **Claude Code plugin** that implements adversarial iterative implementation.
 
 ```
 .claude-plugin/plugin.json  →  Plugin manifest
-commands/*.md               →  Slash commands (/iter-loop, /iter-validate, etc.)
-hooks/hooks.json            →  Stop hook that blocks exit during active session
-cmd/iter/main.go            →  CLI binary for state management
-bin/iter                    →  Compiled binary (build output)
+commands/iter.md            →  /iter command (minimal stub)
+commands/iter-workflow.md   →  /iter-workflow command (minimal stub)
+hooks/hooks.json            →  Stop hook for session control
+cmd/iter/main.go            →  Binary with embedded prompts and state management
+bin/                        →  Build output (self-contained plugin)
 .iter/                      →  Session state (created at runtime)
 ```
 
-The plugin works by:
-- Slash commands invoke the `bin/iter` CLI to manage state and output prompts
-- Stop hook calls `iter hook-stop` to block exit until session completes
-- State persists in `.iter/state.json`, artifacts in `.iter/workdir/`
+**Key design**: All prompts and logic are embedded in the Go binary. Command markdown files are minimal stubs that invoke the binary.
 
-### Multi-Agent Workflow
+### Workflow
 
 ```
 ARCHITECT  →  Analyze requirements, create step_N.md documents
@@ -44,21 +42,26 @@ VALIDATOR  →  Review with adversarial stance (DEFAULT: REJECT)
 
 ## Execution Rules
 
-These rules apply when Iter is running (via `/iter-loop`):
+When Iter is running:
 
-- **CORRECTNESS over SPEED** - never rush validation
+- **CORRECTNESS over SPEED** - never rush
 - **Requirements are LAW** - no interpretation or deviation
 - **EXISTING PATTERNS ARE LAW** - match codebase style exactly
 - **CLEANUP IS MANDATORY** - remove dead/redundant code
-- **BUILD VERIFICATION IS MANDATORY** - verify after each change
-- **Validator DEFAULT STANCE: REJECT** - find problems, don't confirm success
+- **BUILD MUST PASS** - verify after each change
+- **Validator DEFAULT: REJECT** - find problems, don't confirm success
 
-## Adding Components
+## Binary Commands
 
-### New Plugin Command
-1. Create `commands/<name>.md` with YAML frontmatter
-2. Reference `bin/iter` CLI for state management
-
-### New CLI Subcommand
-1. Add case in `cmd/iter/main.go` switch statement
-2. Implement `cmd<Name>(args []string) error` function
+```bash
+iter run "<task>"           # Start iterative implementation
+iter workflow "<spec>"      # Start workflow-based implementation
+iter status                 # Show session status
+iter step [N]               # Show step instructions
+iter pass                   # Record validation pass
+iter reject "<reason>"      # Record validation rejection
+iter next                   # Move to next step
+iter complete               # Mark session complete
+iter reset                  # Reset session
+iter hook-stop              # Stop hook handler (JSON)
+```

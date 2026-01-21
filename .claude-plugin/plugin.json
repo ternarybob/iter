@@ -1,7 +1,7 @@
 {
   "name": "iter",
-  "version": "1.0.0",
-  "description": "Adversarial multi-agent DevOps loop for Claude Code - Architect, Worker, Validator feedback cycle",
+  "version": "2.0.0",
+  "description": "Adversarial iterative implementation for Claude Code - structured loop until requirements/tests pass",
   "author": {
     "name": "ternarybob"
   },
@@ -9,12 +9,10 @@
   "license": "MIT",
   "keywords": [
     "devops",
-    "agent",
-    "adversarial",
+    "iteration",
     "validation",
+    "adversarial",
     "autonomous"
   ],
-  "commands": "./commands/",
-  "skills": "./plugin-skills/",
-  "hooks": "./hooks/hooks.json"
+  "commands": "./commands/"
 }
