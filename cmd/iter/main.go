@@ -32,10 +32,41 @@ import (
 )
 
 const (
-	stateDir  = ".iter"
-	stateFile = "state.json"
-	version   = "2.1.20260122-0928"
+	stateDirName = ".iter"
+	stateFile    = "state.json"
+	version      = "2.1.20260122-0928"
 )
+
+// findProjectRoot searches upward from cwd for project markers (.git, go.mod).
+// Returns the directory containing the marker, or cwd if none found.
+func findProjectRoot() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "."
+	}
+
+	dir := cwd
+	for {
+		// Check for project markers
+		for _, marker := range []string{".git", "go.mod", ".claude-plugin"} {
+			if _, err := os.Stat(filepath.Join(dir, marker)); err == nil {
+				return dir
+			}
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			// Reached filesystem root, use original cwd
+			return cwd
+		}
+		dir = parent
+	}
+}
+
+// getStateDir returns the path to the .iter directory in the project root.
+func getStateDir() string {
+	return filepath.Join(findProjectRoot(), stateDirName)
+}
 
 // Embedded prompts - all prompt content lives here in the binary
 var prompts = struct {
@@ -348,7 +379,7 @@ func summarizeTask(task string) string {
 func generateWorkdirPath(task string) string {
 	slug := summarizeTask(task)
 	timestamp := time.Now().Format("20060102-03-04")
-	return filepath.Join(stateDir, "workdir", fmt.Sprintf("%s-%s", slug, timestamp))
+	return filepath.Join(getStateDir(), "workdir", fmt.Sprintf("%s-%s", slug, timestamp))
 }
 
 // cmdRun starts an iterative implementation session.
@@ -779,7 +810,7 @@ func cmdComplete(args []string) error {
 
 // cmdReset clears session state.
 func cmdReset(args []string) error {
-	if err := os.RemoveAll(stateDir); err != nil {
+	if err := os.RemoveAll(getStateDir()); err != nil {
 		return fmt.Errorf("failed to remove state: %w", err)
 	}
 	fmt.Println("Iter session reset.")
@@ -1141,7 +1172,7 @@ func formatTime(t time.Time) string {
 // State persistence
 
 func loadState() (*State, error) {
-	data, err := os.ReadFile(filepath.Join(stateDir, stateFile))
+	data, err := os.ReadFile(filepath.Join(getStateDir(), stateFile))
 	if err != nil {
 		return nil, err
 	}
@@ -1153,6 +1184,7 @@ func loadState() (*State, error) {
 }
 
 func saveState(state *State) error {
+	stateDir := getStateDir()
 	if err := os.MkdirAll(stateDir, 0755); err != nil {
 		return err
 	}
