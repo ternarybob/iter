@@ -35,8 +35,8 @@ import (
 
 // OSInfo contains detected operating system information.
 type OSInfo struct {
-	OS       string // "linux", "darwin", "windows"
-	IsWSL    bool   // Running in Windows Subsystem for Linux
+	OS        string // "linux", "darwin", "windows"
+	IsWSL     bool   // Running in Windows Subsystem for Linux
 	WSLDistro string // WSL distribution name if applicable
 }
 
@@ -277,7 +277,7 @@ func cleanupWorktree(state *State, deleteBranch bool) error {
 const (
 	stateDir  = ".iter"
 	stateFile = "state.json"
-	version   = "2.1.20260122-0928"
+	version   = "2.1.20260122-1052"
 )
 
 // Embedded prompts - all prompt content lives here in the binary
