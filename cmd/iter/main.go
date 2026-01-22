@@ -312,7 +312,6 @@ func findProjectRoot() string {
 func getStateDir() string {
 	return filepath.Join(findProjectRoot(), stateDir)
 }
-
 // Embedded prompts - all prompt content lives here in the binary
 var prompts = struct {
 	SystemRules     string
@@ -1261,8 +1260,35 @@ func cmdReset(args []string) error {
 	return nil
 }
 
+// HookInput represents the JSON input received from Claude Code hooks via stdin.
+type HookInput struct {
+	SessionID         string `json:"session_id,omitempty"`
+	Transcript        string `json:"transcript,omitempty"`
+	TranscriptSummary string `json:"transcript_summary,omitempty"`
+	StopHookComplete  bool   `json:"stop_hook_complete,omitempty"`
+}
+
+// isIterCommand checks if the transcript/prompt indicates an /iter command.
+func isIterCommand(input HookInput) bool {
+	// Check transcript for /iter command patterns
+	transcript := input.Transcript
+	if transcript == "" {
+		transcript = input.TranscriptSummary
+	}
+
+	// Look for /iter commands in the transcript
+	// Match /iter, /iter-workflow, but not other commands
+	iterPattern := regexp.MustCompile(`(?m)^/iter(?:-workflow)?\b`)
+	return iterPattern.MatchString(transcript)
+}
+
 // cmdHookStop handles the stop hook for Claude Code.
 func cmdHookStop(args []string) error {
+	// Read hook input from stdin
+	var input HookInput
+	decoder := json.NewDecoder(os.Stdin)
+	_ = decoder.Decode(&input) // Ignore errors - input may be empty
+
 	state, err := loadState()
 	if err != nil {
 		// No session - allow exit
@@ -1274,6 +1300,13 @@ func cmdHookStop(args []string) error {
 			Continue:      true,
 			SystemMessage: "Iter session completed.",
 		})
+	}
+
+	// CRITICAL: Only block for /iter commands, not other commands like /commit
+	// Check if this is actually an iter command based on transcript content
+	if !isIterCommand(input) {
+		// Not an iter command - allow continuation without blocking
+		return outputJSON(HookResponse{Continue: true})
 	}
 
 	if state.Iteration >= state.MaxIterations {
