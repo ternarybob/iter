@@ -9,7 +9,7 @@
     {
       "name": "iter",
       "description": "Adversarial iterative implementation - structured loop until requirements/tests pass",
-      "version": "2.1.20260122-1157",
+      "version": "2.1.20260122-1202",
       "author": {
         "name": "ternarybob"
       },
