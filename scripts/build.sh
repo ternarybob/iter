@@ -25,8 +25,8 @@ fi
 
 # Update version in source manifests
 echo "Updating version to ${VERSION}..."
-sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"${VERSION}\"/" "$PROJECT_DIR/.claude-plugin/plugin.json"
-sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"${VERSION}\"/" "$PROJECT_DIR/.claude-plugin/marketplace.json"
+sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"${VERSION}\"/" "$PROJECT_DIR/config/plugin.json"
+sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"${VERSION}\"/" "$PROJECT_DIR/config/marketplace.json"
 
 # Create marketplace structure:
 #   bin/
@@ -50,8 +50,8 @@ go build -ldflags "-X 'main.version=${VERSION}'" -o "$PROJECT_DIR/bin/plugins/it
 chmod +x "$PROJECT_DIR/bin/plugins/iter/iter"
 
 # Copy plugin manifests
-cp "$PROJECT_DIR/.claude-plugin/marketplace.json" "$PROJECT_DIR/bin/.claude-plugin/marketplace.json"
-cp "$PROJECT_DIR/.claude-plugin/plugin.json" "$PROJECT_DIR/bin/plugins/iter/.claude-plugin/plugin.json"
+cp "$PROJECT_DIR/config/marketplace.json" "$PROJECT_DIR/bin/.claude-plugin/marketplace.json"
+cp "$PROJECT_DIR/config/plugin.json" "$PROJECT_DIR/bin/plugins/iter/.claude-plugin/plugin.json"
 
 # Copy command stubs
 cp "$PROJECT_DIR/commands/iter.md" "$PROJECT_DIR/bin/plugins/iter/commands/"
