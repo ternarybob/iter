@@ -23,11 +23,13 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/ternarybob/iter/index"
@@ -272,8 +274,10 @@ func cleanupWorktree(state *State, deleteBranch bool) error {
 }
 
 const (
-	stateDir  = ".iter"
-	stateFile = "state.json"
+	stateDir      = ".iter"
+	stateFile     = "state.json"
+	daemonPIDFile = "index.pid"
+	daemonLogFile = "index.log"
 )
 
 // version is set via -ldflags at build time
@@ -504,6 +508,16 @@ func main() {
 	cmd := os.Args[1]
 	args := os.Args[2:]
 
+	// Auto-start index daemon for commands that benefit from it
+	// Skip for: daemon stop, version, help, hook-stop, reset
+	if shouldAutoStartDaemon(cmd, args) {
+		repoRoot, err := os.Getwd()
+		if err == nil {
+			cfg := index.DefaultConfig(repoRoot)
+			ensureIndexDaemon(cfg)
+		}
+	}
+
 	var err error
 	switch cmd {
 	case "run":
@@ -546,6 +560,26 @@ func main() {
 	}
 }
 
+// shouldAutoStartDaemon determines if the daemon should be auto-started for the given command.
+func shouldAutoStartDaemon(cmd string, args []string) bool {
+	switch cmd {
+	case "run", "workflow", "search", "status":
+		return true
+	case "index":
+		// Don't auto-start for "index daemon stop" or "index daemon --foreground"
+		if len(args) > 0 && args[0] == "daemon" {
+			if len(args) > 1 && args[1] == "stop" {
+				return false
+			}
+			// Don't auto-start when we're explicitly starting/checking the daemon
+			return false
+		}
+		return true
+	default:
+		return false
+	}
+}
+
 func printUsage() {
 	fmt.Println(`iter - Adversarial iterative implementation for Claude Code
 
@@ -571,12 +605,20 @@ Code Index Commands:
   index                  Show index status
   index build            Build/rebuild the full code index
   index clear            Clear and rebuild the index
-  index watch            Start file watcher for real-time indexing
+  index watch            Start file watcher for real-time indexing (blocking)
+  index daemon           Start background daemon (auto-detaches)
+  index daemon status    Check if daemon is running
+  index daemon stop      Stop the daemon gracefully
   search "<query>"       Search the code index
     --kind=<type>        Filter by symbol type (function, method, type, const)
     --path=<prefix>      Filter by file path prefix
     --branch=<branch>    Filter by git branch
     --limit=<n>          Maximum results (default 10)
+
+Index Daemon:
+  The index daemon runs as a persistent background process that watches
+  for file changes and keeps the code index updated in real-time.
+  It auto-starts when running: iter run, workflow, search, status, or index.
 
 The iter loop:
   1. ARCHITECT: Analyze requirements, create step documents
@@ -752,14 +794,6 @@ On completion, changes will be merged back to '%s'.
 		return fmt.Errorf("failed to save state: %w", err)
 	}
 
-	// Start code indexing with background watcher
-	repoRoot, _ := os.Getwd()
-	cfg := index.DefaultConfig(repoRoot)
-	if err := startBackgroundWatcher(cfg); err != nil {
-		// Non-fatal: log warning but continue
-		fmt.Fprintf(os.Stderr, "warning: failed to start code indexer: %v\n", err)
-	}
-
 	// Get OS guidance
 	osGuidance := getOSGuidance(osInfo)
 
@@ -905,14 +939,6 @@ On completion, changes will be merged back to '%s'.
 
 	if err := saveState(state); err != nil {
 		return fmt.Errorf("failed to save state: %w", err)
-	}
-
-	// Start code indexing with background watcher
-	repoRoot, _ := os.Getwd()
-	cfg := index.DefaultConfig(repoRoot)
-	if err := startBackgroundWatcher(cfg); err != nil {
-		// Non-fatal: log warning but continue
-		fmt.Fprintf(os.Stderr, "warning: failed to start code indexer: %v\n", err)
 	}
 
 	// Get OS guidance
@@ -1414,9 +1440,6 @@ Run 'iter status' for session details.`,
 
 // Code Index Commands
 
-// Global watcher instance for background monitoring
-var globalWatcher *index.Watcher
-
 // ensureIndex checks if index exists and builds it if empty.
 func ensureIndex(cfg index.Config) (*index.Indexer, error) {
 	idx, err := index.NewIndexer(cfg)
@@ -1437,30 +1460,6 @@ func ensureIndex(cfg index.Config) (*index.Indexer, error) {
 	}
 
 	return idx, nil
-}
-
-// startBackgroundWatcher starts the file watcher in a goroutine.
-func startBackgroundWatcher(cfg index.Config) error {
-	if globalWatcher != nil && globalWatcher.IsRunning() {
-		return nil // Already running
-	}
-
-	idx, err := ensureIndex(cfg)
-	if err != nil {
-		return err
-	}
-
-	watcher, err := index.NewWatcher(idx)
-	if err != nil {
-		return fmt.Errorf("create watcher: %w", err)
-	}
-
-	if err := watcher.Start(); err != nil {
-		return fmt.Errorf("start watcher: %w", err)
-	}
-
-	globalWatcher = watcher
-	return nil
 }
 
 // cmdIndex handles the index subcommand.
@@ -1486,6 +1485,24 @@ func cmdIndex(args []string) error {
 		return cmdIndexClear(cfg)
 	case "watch":
 		return cmdIndexWatch(cfg)
+	case "daemon":
+		if len(args) > 1 {
+			switch args[1] {
+			case "status":
+				return cmdDaemonStatus(cfg)
+			case "stop":
+				return cmdDaemonStop(cfg)
+			}
+		}
+		// Check for --foreground flag
+		foreground := false
+		for _, arg := range args[1:] {
+			if arg == "--foreground" {
+				foreground = true
+				break
+			}
+		}
+		return cmdDaemonStart(cfg, foreground)
 	default:
 		return cmdIndexStatus(cfg)
 	}
@@ -1499,7 +1516,12 @@ func cmdIndexStatus(cfg index.Config) error {
 	}
 
 	stats := idx.Stats()
-	watcherRunning := globalWatcher != nil && globalWatcher.IsRunning()
+	daemonRunning, daemonPID := isDaemonRunning(cfg)
+
+	daemonStatus := "stopped"
+	if daemonRunning {
+		daemonStatus = fmt.Sprintf("running (PID %d)", daemonPID)
+	}
 
 	fmt.Printf(`# Code Index Status
 
@@ -1507,11 +1529,11 @@ Documents: %d
 Files indexed: %d
 Current branch: %s
 Last updated: %s
-Watcher running: %v
+Daemon: %s
 
 Index path: %s
 `, stats.DocumentCount, stats.FileCount, stats.CurrentBranch,
-		formatTime(stats.LastUpdated), watcherRunning,
+		formatTime(stats.LastUpdated), daemonStatus,
 		filepath.Join(cfg.RepoRoot, cfg.IndexPath))
 
 	return nil
@@ -1580,6 +1602,240 @@ func cmdIndexWatch(cfg index.Config) error {
 	select {}
 }
 
+// Daemon PID file helpers
+
+// getDaemonPIDPath returns the path to the daemon PID file.
+func getDaemonPIDPath(cfg index.Config) string {
+	return filepath.Join(cfg.RepoRoot, stateDir, daemonPIDFile)
+}
+
+// getDaemonLogPath returns the path to the daemon log file.
+func getDaemonLogPath(cfg index.Config) string {
+	return filepath.Join(cfg.RepoRoot, stateDir, daemonLogFile)
+}
+
+// writeDaemonPID writes the current process PID to the PID file.
+func writeDaemonPID(cfg index.Config) error {
+	pidPath := getDaemonPIDPath(cfg)
+	if err := os.MkdirAll(filepath.Dir(pidPath), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0644)
+}
+
+// removeDaemonPID removes the PID file.
+func removeDaemonPID(cfg index.Config) {
+	_ = os.Remove(getDaemonPIDPath(cfg))
+}
+
+// readDaemonPID reads the daemon PID from the PID file.
+func readDaemonPID(cfg index.Config) (int, error) {
+	data, err := os.ReadFile(getDaemonPIDPath(cfg))
+	if err != nil {
+		return 0, err
+	}
+	return strconv.Atoi(strings.TrimSpace(string(data)))
+}
+
+// isDaemonRunning checks if the daemon process is running.
+func isDaemonRunning(cfg index.Config) (bool, int) {
+	pid, err := readDaemonPID(cfg)
+	if err != nil {
+		return false, 0
+	}
+
+	// Check if process exists by sending signal 0
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return false, 0
+	}
+
+	// On Unix, sending signal 0 checks if process exists
+	err = process.Signal(syscall.Signal(0))
+	if err != nil {
+		// Process doesn't exist, clean up stale PID file
+		removeDaemonPID(cfg)
+		return false, 0
+	}
+
+	return true, pid
+}
+
+// cmdDaemonStart starts the index daemon.
+func cmdDaemonStart(cfg index.Config, foreground bool) error {
+	// Check if already running
+	if running, pid := isDaemonRunning(cfg); running {
+		fmt.Printf("Index daemon already running (PID %d)\n", pid)
+		return nil
+	}
+
+	if foreground {
+		// Run in foreground mode with signal handling
+		return runDaemonForeground(cfg)
+	}
+
+	// Spawn self as detached background process
+	return spawnDaemonBackground(cfg)
+}
+
+// spawnDaemonBackground spawns the daemon as a detached background process.
+func spawnDaemonBackground(cfg index.Config) error {
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("get executable path: %w", err)
+	}
+
+	// Ensure .iter directory exists
+	iterDir := filepath.Join(cfg.RepoRoot, stateDir)
+	if err := os.MkdirAll(iterDir, 0755); err != nil {
+		return fmt.Errorf("create .iter directory: %w", err)
+	}
+
+	// Open log file for daemon output
+	logPath := getDaemonLogPath(cfg)
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return fmt.Errorf("open log file: %w", err)
+	}
+
+	cmd := exec.Command(exe, "index", "daemon", "--foreground")
+	cmd.Dir = cfg.RepoRoot
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+
+	// Detach from parent process
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setsid: true, // Create new session (Linux/macOS)
+	}
+
+	if err := cmd.Start(); err != nil {
+		logFile.Close()
+		return fmt.Errorf("start daemon: %w", err)
+	}
+
+	// Don't wait for the process - it runs independently
+	logFile.Close()
+
+	fmt.Printf("Index daemon started (PID %d)\n", cmd.Process.Pid)
+	fmt.Printf("Log file: %s\n", logPath)
+
+	return nil
+}
+
+// runDaemonForeground runs the daemon in foreground mode with signal handling.
+func runDaemonForeground(cfg index.Config) error {
+	// Write timestamp to log
+	fmt.Printf("[%s] Index daemon starting (PID %d)\n", time.Now().Format(time.RFC3339), os.Getpid())
+
+	// Ensure index exists
+	idx, err := ensureIndex(cfg)
+	if err != nil {
+		return fmt.Errorf("ensure index: %w", err)
+	}
+
+	// Write PID file
+	if err := writeDaemonPID(cfg); err != nil {
+		return fmt.Errorf("write PID file: %w", err)
+	}
+	defer removeDaemonPID(cfg)
+
+	// Start watcher
+	watcher, err := index.NewWatcher(idx)
+	if err != nil {
+		return fmt.Errorf("create watcher: %w", err)
+	}
+
+	if err := watcher.Start(); err != nil {
+		return fmt.Errorf("start watcher: %w", err)
+	}
+	defer watcher.Stop()
+
+	fmt.Printf("[%s] Watching for changes in %s\n", time.Now().Format(time.RFC3339), cfg.RepoRoot)
+
+	// Wait for termination signal
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+
+	sig := <-sigCh
+	fmt.Printf("[%s] Received signal %v, shutting down...\n", time.Now().Format(time.RFC3339), sig)
+
+	return nil
+}
+
+// cmdDaemonStatus checks if the daemon is running.
+func cmdDaemonStatus(cfg index.Config) error {
+	running, pid := isDaemonRunning(cfg)
+
+	if running {
+		fmt.Printf("Index daemon: running (PID %d)\n", pid)
+
+		// Show additional info
+		logPath := getDaemonLogPath(cfg)
+		if info, err := os.Stat(logPath); err == nil {
+			fmt.Printf("Log file: %s (%.1f KB)\n", logPath, float64(info.Size())/1024)
+		}
+	} else {
+		fmt.Println("Index daemon: stopped")
+	}
+
+	return nil
+}
+
+// cmdDaemonStop stops the running daemon.
+func cmdDaemonStop(cfg index.Config) error {
+	running, pid := isDaemonRunning(cfg)
+	if !running {
+		fmt.Println("Index daemon is not running")
+		return nil
+	}
+
+	// Find the process
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return fmt.Errorf("find process: %w", err)
+	}
+
+	// Send SIGTERM
+	fmt.Printf("Stopping index daemon (PID %d)...\n", pid)
+	if err := process.Signal(syscall.SIGTERM); err != nil {
+		return fmt.Errorf("send signal: %w", err)
+	}
+
+	// Wait briefly for the process to exit
+	for i := 0; i < 10; i++ {
+		time.Sleep(100 * time.Millisecond)
+		if running, _ := isDaemonRunning(cfg); !running {
+			fmt.Println("Index daemon stopped")
+			return nil
+		}
+	}
+
+	// Force kill if still running
+	fmt.Println("Daemon did not stop gracefully, forcing...")
+	if err := process.Kill(); err != nil {
+		return fmt.Errorf("kill process: %w", err)
+	}
+
+	removeDaemonPID(cfg)
+	fmt.Println("Index daemon stopped")
+
+	return nil
+}
+
+// ensureIndexDaemon ensures the index daemon is running.
+// Called automatically by commands that benefit from the index.
+func ensureIndexDaemon(cfg index.Config) {
+	if running, _ := isDaemonRunning(cfg); running {
+		return // Already running
+	}
+
+	// Spawn daemon silently in background
+	if err := spawnDaemonBackground(cfg); err != nil {
+		// Non-fatal: just log to stderr
+		fmt.Fprintf(os.Stderr, "warning: failed to start index daemon: %v\n", err)
+	}
+}
+
 // cmdSearch searches the code index.
 func cmdSearch(args []string) error {
 	if len(args) < 1 {
@@ -1617,14 +1873,11 @@ func cmdSearch(args []string) error {
 
 	cfg := index.DefaultConfig(repoRoot)
 
-	// Auto-build index if needed and start watcher
+	// Auto-build index if needed
 	idx, err := ensureIndex(cfg)
 	if err != nil {
 		return err
 	}
-
-	// Start background watcher for real-time updates
-	_ = startBackgroundWatcher(cfg)
 
 	searcher := index.NewSearcher(idx)
 	results, err := searcher.Search(context.Background(), opts)
