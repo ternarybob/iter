@@ -7,10 +7,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 MARKETPLACE_NAME="iter-local"
 
-# Generate version with datetime stamp (e.g., 2.1.20260121-2210)
+# Generate version with datetime stamp and write to .version file
 MAJOR_MINOR="2.1"
 DATETIME_STAMP=$(date +"%Y%m%d-%H%M")
 VERSION="${MAJOR_MINOR}.${DATETIME_STAMP}"
+
+VERSION_FILE="$PROJECT_DIR/.version"
+echo -n "$VERSION" > "$VERSION_FILE"
 
 echo "Building iter plugin v${VERSION} (marketplace format)..."
 
@@ -20,14 +23,10 @@ if ! command -v go &> /dev/null; then
     exit 1
 fi
 
-# Update version in source files
+# Update version in source manifests
 echo "Updating version to ${VERSION}..."
-
-# Update main.go version constant
-sed -i "s/version   = \"[^\"]*\"/version   = \"${VERSION}\"/" "$PROJECT_DIR/cmd/iter/main.go"
-
-# Update plugin.json version
-sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"${VERSION}\"/" "$PROJECT_DIR/.claude-plugin/plugin.json"
+sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"${VERSION}\"/" "$PROJECT_DIR/config/plugin.json"
+sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"${VERSION}\"/" "$PROJECT_DIR/config/marketplace.json"
 
 # Create marketplace structure:
 #   bin/
@@ -43,40 +42,16 @@ mkdir -p "$PROJECT_DIR/bin/plugins/iter/.claude-plugin"
 mkdir -p "$PROJECT_DIR/bin/plugins/iter/commands"
 mkdir -p "$PROJECT_DIR/bin/plugins/iter/hooks"
 
-# Build binary
+# Build binary with version via ldflags
 echo "Compiling binary..."
 cd "$PROJECT_DIR"
 go mod download
-go build -o "$PROJECT_DIR/bin/plugins/iter/iter" "$PROJECT_DIR/cmd/iter"
+go build -ldflags "-X 'main.version=${VERSION}'" -o "$PROJECT_DIR/bin/plugins/iter/iter" "$PROJECT_DIR/cmd/iter"
 chmod +x "$PROJECT_DIR/bin/plugins/iter/iter"
 
-# Create marketplace manifest with current version
-cat > "$PROJECT_DIR/bin/.claude-plugin/marketplace.json" << EOF
-{
-  "\$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "iter-local",
-  "description": "Local marketplace for Iter - adversarial iterative implementation plugin",
-  "owner": {
-    "name": "ternarybob"
-  },
-  "plugins": [
-    {
-      "name": "iter",
-      "description": "Adversarial iterative implementation - structured loop until requirements/tests pass",
-      "version": "${VERSION}",
-      "author": {
-        "name": "ternarybob"
-      },
-      "source": "./plugins/iter",
-      "category": "development",
-      "homepage": "https://github.com/ternarybob/iter"
-    }
-  ]
-}
-EOF
-
-# Copy plugin manifest
-cp "$PROJECT_DIR/.claude-plugin/plugin.json" "$PROJECT_DIR/bin/plugins/iter/.claude-plugin/plugin.json"
+# Copy plugin manifests
+cp "$PROJECT_DIR/config/marketplace.json" "$PROJECT_DIR/bin/.claude-plugin/marketplace.json"
+cp "$PROJECT_DIR/config/plugin.json" "$PROJECT_DIR/bin/plugins/iter/.claude-plugin/plugin.json"
 
 # Copy command stubs
 cp "$PROJECT_DIR/commands/iter.md" "$PROJECT_DIR/bin/plugins/iter/commands/"
