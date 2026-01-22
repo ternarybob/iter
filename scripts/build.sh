@@ -23,11 +23,7 @@ if ! command -v go &> /dev/null; then
     exit 1
 fi
 
-# Update version in plugin manifests
 echo "Using version ${VERSION}..."
-
-# Update plugin.json version
-sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"${VERSION}\"/" "$PROJECT_DIR/.claude-plugin/plugin.json"
 
 # Create marketplace structure:
 #   bin/
