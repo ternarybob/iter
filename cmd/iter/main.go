@@ -277,7 +277,7 @@ func cleanupWorktree(state *State, deleteBranch bool) error {
 const (
 	stateDir  = ".iter"
 	stateFile = "state.json"
-	version   = "2.1.20260122-1152"
+	version   = "2.1.20260122-1205"
 )
 
 // Embedded prompts - all prompt content lives here in the binary
