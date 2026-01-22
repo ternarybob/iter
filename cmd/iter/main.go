@@ -583,6 +583,9 @@ func shouldAutoStartDaemon(cmd string, args []string) bool {
 func printUsage() {
 	fmt.Println(`iter - Adversarial iterative implementation for Claude Code
 
+Usage: iter [command] [options]
+       iter --version
+
 Commands:
   run "<task>"           Start iterative implementation until requirements/tests pass
     --max-iterations N   Set maximum iterations (default 50)
@@ -598,8 +601,10 @@ Commands:
   complete               Mark session complete (merges worktree if active)
   reset                  Reset session state (cleans up worktree)
   hook-stop              Stop hook handler (JSON output)
-  version                Show version
   help                   Show this help
+
+Options:
+  --version, -v          Show version
 
 Code Index Commands:
   index                  Show index status

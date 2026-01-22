@@ -11,7 +11,6 @@ The iter plugin provides three categories of commands:
 | **Iteration** | `/iter`, `/iter-workflow` | Start adversarial implementation sessions |
 | **Session Control** | `status`, `step`, `pass`, `reject`, `next`, `complete`, `reset` | Manage active sessions |
 | **Index & Search** | `/iter-index`, `/iter-search` | Code indexing and semantic search |
-| **Utility** | `/iter-version` | Version information |
 
 ## Iteration Commands
 
@@ -270,18 +269,17 @@ Search indexed code.
 | WORKER | Get implementation context | `/iter-search "Config" --kind=type` |
 | VALIDATOR | Check for duplicates | `/iter-search "NewHandler" --kind=function` |
 
-## Utility Commands
+## Version Information
 
-### /iter-version
-
-Display plugin version.
+To display the plugin version, use the `--version` flag:
 
 ```bash
-/iter-version
+iter --version
+iter -v
 ```
 
 **Output:**
-- Current plugin version (e.g., `2.1.20260122-1245`)
+- Current plugin version (e.g., `iter version 2.1.20260122-1245`)
 - Version is set at build time via `-ldflags`
 
 ## Skills Integration
@@ -298,7 +296,6 @@ From `config/plugin.json`:
 | `iter:iter-workflow` | `/iter-workflow` | Start workflow-based implementation |
 | `iter:iter-index` | `/iter-index` | Manage code index |
 | `iter:iter-search` | `/iter-search` | Search indexed code |
-| `iter:iter-version` | `/iter-version` | Show version info |
 
 ### Allowed Tools
 
