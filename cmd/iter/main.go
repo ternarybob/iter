@@ -1467,8 +1467,22 @@ func ensureIndex(cfg index.Config) (*index.Indexer, error) {
 
 // cmdIndex handles the index subcommand.
 func cmdIndex(args []string) error {
-	repoRoot := findProjectRoot()
+	// Check for --repo-root flag first (used when daemon is spawned)
+	repoRoot := ""
+	var filteredArgs []string
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "--repo-root=") {
+			repoRoot = strings.TrimPrefix(arg, "--repo-root=")
+		} else {
+			filteredArgs = append(filteredArgs, arg)
+		}
+	}
+
+	if repoRoot == "" {
+		repoRoot = findProjectRoot()
+	}
 	cfg := index.DefaultConfig(repoRoot)
+	args = filteredArgs
 
 	// Determine subcommand
 	subCmd := ""
@@ -1696,15 +1710,13 @@ func spawnDaemonBackground(cfg index.Config) error {
 		return fmt.Errorf("open log file: %w", err)
 	}
 
-	cmd := exec.Command(exe, "index", "daemon", "--foreground")
+	cmd := exec.Command(exe, "index", "daemon", "--foreground", "--repo-root="+cfg.RepoRoot)
 	cmd.Dir = cfg.RepoRoot
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 
-	// Detach from parent process
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setsid: true, // Create new session (Linux/macOS)
-	}
+	// Keep daemon as child process so it exits when Claude exits
+	// (no Setsid - daemon will receive SIGHUP when parent terminal closes)
 
 	if err := cmd.Start(); err != nil {
 		logFile.Close()
@@ -1750,9 +1762,9 @@ func runDaemonForeground(cfg index.Config) error {
 
 	fmt.Printf("[%s] Watching for changes in %s\n", time.Now().Format(time.RFC3339), cfg.RepoRoot)
 
-	// Wait for termination signal
+	// Wait for termination signal (SIGHUP when parent terminal closes)
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 
 	sig := <-sigCh
 	fmt.Printf("[%s] Received signal %v, shutting down...\n", time.Now().Format(time.RFC3339), sig)
