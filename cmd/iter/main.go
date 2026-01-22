@@ -277,8 +277,10 @@ func cleanupWorktree(state *State, deleteBranch bool) error {
 const (
 	stateDir  = ".iter"
 	stateFile = "state.json"
-	version   = "2.1.20260122-1056"
 )
+
+// version is set via -ldflags at build time
+var version = "dev"
 
 // findProjectRoot searches upward from cwd for project markers (.git, go.mod).
 // Returns the directory containing the marker, or cwd if none found.

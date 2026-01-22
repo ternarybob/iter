@@ -7,10 +7,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 MARKETPLACE_NAME="iter-local"
 
-# Generate version with datetime stamp (e.g., 2.1.20260121-2210)
-MAJOR_MINOR="2.1"
-DATETIME_STAMP=$(date +"%Y%m%d-%H%M")
-VERSION="${MAJOR_MINOR}.${DATETIME_STAMP}"
+# Read version from .version file
+VERSION_FILE="$PROJECT_DIR/.version"
+if [ ! -f "$VERSION_FILE" ]; then
+    echo "Error: .version file not found at $VERSION_FILE"
+    exit 1
+fi
+VERSION=$(cat "$VERSION_FILE" | tr -d '\n')
 
 echo "Building iter plugin v${VERSION} (marketplace format)..."
 
@@ -20,11 +23,8 @@ if ! command -v go &> /dev/null; then
     exit 1
 fi
 
-# Update version in source files
-echo "Updating version to ${VERSION}..."
-
-# Update main.go version constant
-sed -i "s/version   = \"[^\"]*\"/version   = \"${VERSION}\"/" "$PROJECT_DIR/cmd/iter/main.go"
+# Update version in plugin manifests
+echo "Using version ${VERSION}..."
 
 # Update plugin.json version
 sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"${VERSION}\"/" "$PROJECT_DIR/.claude-plugin/plugin.json"
@@ -43,11 +43,11 @@ mkdir -p "$PROJECT_DIR/bin/plugins/iter/.claude-plugin"
 mkdir -p "$PROJECT_DIR/bin/plugins/iter/commands"
 mkdir -p "$PROJECT_DIR/bin/plugins/iter/hooks"
 
-# Build binary
+# Build binary with version via ldflags
 echo "Compiling binary..."
 cd "$PROJECT_DIR"
 go mod download
-go build -o "$PROJECT_DIR/bin/plugins/iter/iter" "$PROJECT_DIR/cmd/iter"
+go build -ldflags "-X 'main.version=${VERSION}'" -o "$PROJECT_DIR/bin/plugins/iter/iter" "$PROJECT_DIR/cmd/iter"
 chmod +x "$PROJECT_DIR/bin/plugins/iter/iter"
 
 # Create marketplace manifest with current version
