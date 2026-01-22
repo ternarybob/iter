@@ -2,7 +2,7 @@
   "hooks": {
     "Stop": [
       {
-        "matcher": "",
+        "matcher": "^/iter",
         "hooks": [
           {
             "type": "command",
