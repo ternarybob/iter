@@ -1,0 +1,21 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "iter-local",
+  "description": "Local marketplace for Iter - adversarial iterative implementation plugin",
+  "owner": {
+    "name": "ternarybob"
+  },
+  "plugins": [
+    {
+      "name": "iter",
+      "description": "Adversarial iterative implementation - structured loop until requirements/tests pass",
+      "version": "2.1.20260122-1155",
+      "author": {
+        "name": "ternarybob"
+      },
+      "source": "./plugins/iter",
+      "category": "development",
+      "homepage": "https://github.com/ternarybob/iter"
+    }
+  ]
+}

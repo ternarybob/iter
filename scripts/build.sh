@@ -23,7 +23,10 @@ if ! command -v go &> /dev/null; then
     exit 1
 fi
 
-echo "Using version ${VERSION}..."
+# Update version in source manifests
+echo "Updating version to ${VERSION}..."
+sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"${VERSION}\"/" "$PROJECT_DIR/.claude-plugin/plugin.json"
+sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"${VERSION}\"/" "$PROJECT_DIR/.claude-plugin/marketplace.json"
 
 # Create marketplace structure:
 #   bin/
@@ -46,32 +49,8 @@ go mod download
 go build -ldflags "-X 'main.version=${VERSION}'" -o "$PROJECT_DIR/bin/plugins/iter/iter" "$PROJECT_DIR/cmd/iter"
 chmod +x "$PROJECT_DIR/bin/plugins/iter/iter"
 
-# Create marketplace manifest with current version
-cat > "$PROJECT_DIR/bin/.claude-plugin/marketplace.json" << EOF
-{
-  "\$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "iter-local",
-  "description": "Local marketplace for Iter - adversarial iterative implementation plugin",
-  "owner": {
-    "name": "ternarybob"
-  },
-  "plugins": [
-    {
-      "name": "iter",
-      "description": "Adversarial iterative implementation - structured loop until requirements/tests pass",
-      "version": "${VERSION}",
-      "author": {
-        "name": "ternarybob"
-      },
-      "source": "./plugins/iter",
-      "category": "development",
-      "homepage": "https://github.com/ternarybob/iter"
-    }
-  ]
-}
-EOF
-
-# Copy plugin manifest
+# Copy plugin manifests
+cp "$PROJECT_DIR/.claude-plugin/marketplace.json" "$PROJECT_DIR/bin/.claude-plugin/marketplace.json"
 cp "$PROJECT_DIR/.claude-plugin/plugin.json" "$PROJECT_DIR/bin/plugins/iter/.claude-plugin/plugin.json"
 
 # Copy command stubs
