@@ -511,11 +511,9 @@ func main() {
 	// Auto-start index daemon for commands that benefit from it
 	// Skip for: daemon stop, version, help, hook-stop, reset
 	if shouldAutoStartDaemon(cmd, args) {
-		repoRoot, err := os.Getwd()
-		if err == nil {
-			cfg := index.DefaultConfig(repoRoot)
-			ensureIndexDaemon(cfg)
-		}
+		repoRoot := findProjectRoot()
+		cfg := index.DefaultConfig(repoRoot)
+		ensureIndexDaemon(cfg)
 	}
 
 	var err error
@@ -1469,12 +1467,7 @@ func ensureIndex(cfg index.Config) (*index.Indexer, error) {
 
 // cmdIndex handles the index subcommand.
 func cmdIndex(args []string) error {
-	// Get current working directory as repo root
-	repoRoot, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("get working directory: %w", err)
-	}
-
+	repoRoot := findProjectRoot()
 	cfg := index.DefaultConfig(repoRoot)
 
 	// Determine subcommand
@@ -1870,12 +1863,7 @@ func cmdSearch(args []string) error {
 		}
 	}
 
-	// Get current working directory as repo root
-	repoRoot, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("get working directory: %w", err)
-	}
-
+	repoRoot := findProjectRoot()
 	cfg := index.DefaultConfig(repoRoot)
 
 	// Auto-build index if needed
