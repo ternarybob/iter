@@ -7,13 +7,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 MARKETPLACE_NAME="iter-local"
 
-# Read version from .version file
+# Generate version with datetime stamp and write to .version file
+MAJOR_MINOR="2.1"
+DATETIME_STAMP=$(date +"%Y%m%d-%H%M")
+VERSION="${MAJOR_MINOR}.${DATETIME_STAMP}"
+
 VERSION_FILE="$PROJECT_DIR/.version"
-if [ ! -f "$VERSION_FILE" ]; then
-    echo "Error: .version file not found at $VERSION_FILE"
-    exit 1
-fi
-VERSION=$(cat "$VERSION_FILE" | tr -d '\n')
+echo -n "$VERSION" > "$VERSION_FILE"
 
 echo "Building iter plugin v${VERSION} (marketplace format)..."
 
