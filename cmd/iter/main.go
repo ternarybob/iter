@@ -180,18 +180,15 @@ func createWorktree(taskSlug string) (worktreePath, branchName string, err error
 		return "", "", fmt.Errorf("get current branch: %w", err)
 	}
 
-	// Get current working directory for absolute path
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "", "", fmt.Errorf("get working directory: %w", err)
-	}
+	// Get project root for .iter directory (not cwd)
+	projectRoot := findProjectRoot()
 
 	// Generate unique branch name
 	timestamp := time.Now().Format("20060102-150405")
 	branchName = fmt.Sprintf("iter/%s-%s", taskSlug, timestamp)
 
-	// Worktree path in .iter/worktrees/ - use absolute path
-	worktreePath = filepath.Join(cwd, stateDir, "worktrees", branchName)
+	// Worktree path in .iter/worktrees/ - use absolute path from project root
+	worktreePath = filepath.Join(projectRoot, stateDir, "worktrees", branchName)
 
 	// Ensure parent directory exists
 	if err := os.MkdirAll(filepath.Dir(worktreePath), 0755); err != nil {
@@ -312,6 +309,7 @@ func findProjectRoot() string {
 func getStateDir() string {
 	return filepath.Join(findProjectRoot(), stateDir)
 }
+
 // Embedded prompts - all prompt content lives here in the binary
 var prompts = struct {
 	SystemRules     string
@@ -677,11 +675,12 @@ func cmdRun(args []string) error {
 	// Detect OS
 	osInfo := detectOS()
 
-	// Get current working directory
+	// Get current working directory and project root
 	originalWorkdir, _ := os.Getwd()
+	projectRoot := findProjectRoot()
 
-	// Generate unique workdir path (always relative to original workdir)
-	workdir := generateWorkdirPath(task, originalWorkdir)
+	// Generate unique workdir path (always in project root .iter directory)
+	workdir := generateWorkdirPath(task, projectRoot)
 	taskSlug := summarizeTask(task)
 
 	// Initialize state
@@ -837,11 +836,12 @@ func cmdWorkflow(args []string) error {
 	// Detect OS
 	osInfo := detectOS()
 
-	// Get current working directory
+	// Get current working directory and project root
 	originalWorkdir, _ := os.Getwd()
+	projectRoot := findProjectRoot()
 
-	// Generate unique workdir path (always relative to original workdir)
-	workdir := generateWorkdirPath(spec, originalWorkdir)
+	// Generate unique workdir path (always in project root .iter directory)
+	workdir := generateWorkdirPath(spec, projectRoot)
 	taskSlug := summarizeTask(spec)
 
 	state := &State{
