@@ -58,6 +58,7 @@ cp "$PROJECT_DIR/commands/iter.md" "$PROJECT_DIR/bin/plugins/iter/commands/"
 cp "$PROJECT_DIR/commands/iter-workflow.md" "$PROJECT_DIR/bin/plugins/iter/commands/"
 cp "$PROJECT_DIR/commands/iter-index.md" "$PROJECT_DIR/bin/plugins/iter/commands/"
 cp "$PROJECT_DIR/commands/iter-search.md" "$PROJECT_DIR/bin/plugins/iter/commands/"
+cp "$PROJECT_DIR/commands/iter-version.md" "$PROJECT_DIR/bin/plugins/iter/commands/"
 
 # Copy hooks (adjust path: binary is at plugin root)
 sed 's|\${CLAUDE_PLUGIN_ROOT}/bin/iter|\${CLAUDE_PLUGIN_ROOT}/iter|g' \
