@@ -1,5 +1,4 @@
 ---
-name: iter-workflow
 description: Start workflow-based implementation with custom workflow spec
 allowed-tools: ["Bash", "Read", "Write", "Edit", "Glob", "Grep"]
 ---

@@ -1,5 +1,4 @@
 ---
-name: iter
 description: Start iterative implementation until requirements/tests pass
 allowed-tools: ["Bash", "Read", "Write", "Edit", "Glob", "Grep"]
 ---

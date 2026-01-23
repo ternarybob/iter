@@ -283,6 +283,39 @@ const (
 // version is set via -ldflags at build time
 var version = "dev"
 
+// installerSnippet is printed on version/install to help users set up /iter shortcut
+const installerSnippet = `
+To enable /iter shortcut (instead of /iter:run):
+
+  Mac/Linux/WSL:
+    mkdir -p ~/.claude/skills/iter && cat << 'EOF' > ~/.claude/skills/iter/SKILL.md
+---
+name: iter
+description: Run iter default workflow (wrapper for iter plugin)
+---
+
+Execute the plugin skill ` + "`/iter:run`" + ` with the same arguments.
+
+Arguments:
+$ARGUMENTS
+EOF
+
+  Windows PowerShell:
+    $d="$env:USERPROFILE\.claude\skills\iter"; md $d -Force; @"
+---
+name: iter
+description: Run iter default workflow (wrapper for iter plugin)
+---
+
+Execute the plugin skill ` + "``" + `/iter:run` + "``" + ` with the same arguments.
+
+Arguments:
+`+ "`" + `$ARGUMENTS
+"@ | Out-File "$d\SKILL.md" -Encoding utf8
+
+Restart Claude Code after running the installer.
+`
+
 // findProjectRoot searches upward from cwd for project markers (.git, go.mod).
 // Returns the directory containing the marker, or cwd if none found.
 func findProjectRoot() string {
@@ -544,6 +577,8 @@ func main() {
 		err = cmdSearch(args)
 	case "version", "-v", "--version":
 		cmdVersion()
+	case "install":
+		cmdInstall()
 	case "help", "-h", "--help":
 		printUsage()
 	default:
@@ -599,6 +634,7 @@ Commands:
   complete               Mark session complete (merges worktree if active)
   reset                  Reset session state (cleans up worktree)
   hook-stop              Stop hook handler (JSON output)
+  install                Show installer for /iter shortcut skill
   help                   Show this help
 
 Options:
@@ -641,6 +677,13 @@ OS Detection:
 
 func cmdVersion() {
 	fmt.Printf("iter version %s\n", version)
+	fmt.Println(installerSnippet)
+}
+
+// cmdInstall prints the installer snippet for setting up /iter shortcut.
+func cmdInstall() {
+	fmt.Println("iter - Adversarial iterative implementation")
+	fmt.Println(installerSnippet)
 }
 
 // summarizeTask creates a short slug from a task description.

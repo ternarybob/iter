@@ -28,7 +28,7 @@ sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"${VERSION}\"/" "$PROJECT_DIR/co
 # Plugin at bin/ root, marketplace manifest in bin/.claude-plugin/
 rm -rf "$PROJECT_DIR/bin"
 mkdir -p "$PROJECT_DIR/bin/.claude-plugin"
-mkdir -p "$PROJECT_DIR/bin/commands"
+mkdir -p "$PROJECT_DIR/bin/skills"
 mkdir -p "$PROJECT_DIR/bin/hooks"
 
 # Build binary
@@ -41,9 +41,17 @@ chmod +x "$PROJECT_DIR/bin/iter"
 # Copy marketplace manifest (in .claude-plugin for marketplace install)
 cp "$PROJECT_DIR/config/marketplace.json" "$PROJECT_DIR/bin/.claude-plugin/marketplace.json"
 
-# Copy plugin manifest, commands, and hooks (at bin/ root for --plugin-dir)
-cp "$PROJECT_DIR/config/plugin.json" "$PROJECT_DIR/bin/plugin.json"
-cp "$PROJECT_DIR/commands/"*.md "$PROJECT_DIR/bin/commands/"
+# Copy plugin manifest to .claude-plugin (where Claude Code expects it)
+cp "$PROJECT_DIR/config/plugin.json" "$PROJECT_DIR/bin/.claude-plugin/plugin.json"
+
+# Copy skills (each skill in its own directory with SKILL.md)
+for skill_dir in "$PROJECT_DIR/skills/"*/; do
+    skill_name=$(basename "$skill_dir")
+    mkdir -p "$PROJECT_DIR/bin/skills/$skill_name"
+    cp "$skill_dir/SKILL.md" "$PROJECT_DIR/bin/skills/$skill_name/"
+done
+
+# Copy hooks
 cp "$PROJECT_DIR/hooks/hooks.json" "$PROJECT_DIR/bin/hooks/"
 
 # Verify
