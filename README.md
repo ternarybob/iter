@@ -22,38 +22,42 @@
 ./scripts/build.sh
 ```
 
-### Install (Persistent)
-
-The build creates a local marketplace. Install with:
+### Install
 
 ```bash
-# Add the local marketplace (one-time)
+# Add local marketplace (once)
 claude plugin marketplace add /path/to/iter/bin
 
-# Install the plugin
-claude plugin install iter@iter-local
+# Install plugin (choose scope)
+claude plugin install iter@iter-local                  # user scope (default)
+claude plugin install iter@iter-local --scope project  # project scope (shared via git)
+claude plugin install iter@iter-local --scope local    # local scope (gitignored)
 ```
 
-### Plugin Management
+**Scopes:**
+| Scope | Location | Use case |
+|-------|----------|----------|
+| `user` | `~/.claude/settings.json` | Personal, all projects (default) |
+| `project` | `.claude/settings.json` | Team-shared via version control |
+| `local` | `.claude/settings.local.json` | Project-specific, gitignored |
+
+### Update
+
+Plugin auto-updates on Claude restart when the version changes. To manually update:
 
 ```bash
-# Update after rebuilding
+claude plugin marketplace update iter-local
 claude plugin update iter@iter-local
+```
 
-# Uninstall
+### Uninstall
+
+```bash
+# Uninstall plugin
 claude plugin uninstall iter@iter-local
 
-# Disable/enable without uninstalling
-claude plugin disable iter@iter-local
-claude plugin enable iter@iter-local
-```
-
-### Development Mode
-
-For development without installing:
-
-```bash
-claude --plugin-dir /path/to/iter/bin/plugins/iter
+# Remove marketplace (optional)
+claude plugin marketplace remove iter-local
 ```
 
 ## Commands
@@ -62,6 +66,8 @@ claude --plugin-dir /path/to/iter/bin/plugins/iter
 |---------|-------------|
 | `/iter "<task>"` | Start iterative implementation |
 | `/iter-workflow "<spec>"` | Start workflow-based implementation |
+| `/iter-index` | Manage the code index (status, build, clear, watch) |
+| `/iter-search "<query>"` | Search indexed code (semantic/keyword search) |
 
 ## How It Works
 
@@ -107,21 +113,24 @@ Created in `.iter/workdir/`:
 
 ```
 iter/
-├── .claude-plugin/plugin.json   # Plugin manifest (source)
-├── commands/                    # Command stubs (source)
+├── config/
+│   ├── plugin.json              # Plugin manifest
+│   └── marketplace.json         # Marketplace manifest
+├── commands/                    # Command definitions
 │   ├── iter.md
-│   └── iter-workflow.md
-├── hooks/hooks.json             # Stop hook (source)
+│   ├── iter-workflow.md
+│   ├── iter-index.md
+│   └── iter-search.md
+├── hooks/hooks.json             # Stop hook
 ├── cmd/iter/main.go             # Binary source (all logic here)
 ├── scripts/build.sh             # Build script
-└── bin/                         # Build output (marketplace format)
+└── bin/                         # Build output (plugin root)
     ├── .claude-plugin/
     │   └── marketplace.json     # Marketplace manifest
-    └── plugins/iter/            # Plugin package
-        ├── .claude-plugin/plugin.json
-        ├── commands/
-        ├── hooks/
-        └── iter                 # Compiled binary
+    ├── plugin.json              # Plugin manifest
+    ├── iter                     # Compiled binary
+    ├── commands/                # Command definitions
+    └── hooks/                   # Hook definitions
 ```
 
 ## License

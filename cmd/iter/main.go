@@ -1318,6 +1318,13 @@ func cmdHookStop(args []string) error {
 	decoder := json.NewDecoder(os.Stdin)
 	_ = decoder.Decode(&input) // Ignore errors - input may be empty
 
+	// CRITICAL: Only process for /iter run or /iter workflow commands
+	// Check this FIRST before loading state to avoid spurious messages
+	if !isIterCommand(input) {
+		// Not an iter command - allow continuation without blocking
+		return outputJSON(HookResponse{Continue: true})
+	}
+
 	state, err := loadState()
 	if err != nil {
 		// No session - allow exit
@@ -1329,13 +1336,6 @@ func cmdHookStop(args []string) error {
 			Continue:      true,
 			SystemMessage: "Iter session completed.",
 		})
-	}
-
-	// CRITICAL: Only block for /iter commands, not other commands like /commit
-	// Check if this is actually an iter command based on transcript content
-	if !isIterCommand(input) {
-		// Not an iter command - allow continuation without blocking
-		return outputJSON(HookResponse{Continue: true})
 	}
 
 	if state.Iteration >= state.MaxIterations {

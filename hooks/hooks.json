@@ -2,11 +2,10 @@
   "hooks": {
     "Stop": [
       {
-        "matcher": "^/iter",
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/iter hook-stop"
+            "command": "${CLAUDE_PLUGIN_ROOT}/iter hook-stop"
           }
         ]
       }

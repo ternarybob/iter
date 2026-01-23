@@ -1,21 +1,18 @@
 #!/bin/bash
-# Build iter plugin as a local marketplace for persistent installation
+# Build iter plugin
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-MARKETPLACE_NAME="iter-local"
 
-# Generate version with datetime stamp and write to .version file
+# Generate version
 MAJOR_MINOR="2.1"
 DATETIME_STAMP=$(date +"%Y%m%d-%H%M")
 VERSION="${MAJOR_MINOR}.${DATETIME_STAMP}"
 
-VERSION_FILE="$PROJECT_DIR/.version"
-echo -n "$VERSION" > "$VERSION_FILE"
-
-echo "Building iter plugin v${VERSION} (marketplace format)..."
+echo -n "$VERSION" > "$PROJECT_DIR/.version"
+echo "Building iter v${VERSION}..."
 
 # Check Go
 if ! command -v go &> /dev/null; then
@@ -23,75 +20,40 @@ if ! command -v go &> /dev/null; then
     exit 1
 fi
 
-# Update version in source manifests
-echo "Updating version to ${VERSION}..."
+# Update version in manifests
 sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"${VERSION}\"/" "$PROJECT_DIR/config/plugin.json"
 sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"${VERSION}\"/" "$PROJECT_DIR/config/marketplace.json"
 
-# Create marketplace structure:
-#   bin/
-#   ├── .claude-plugin/marketplace.json
-#   └── plugins/iter/
-#       ├── .claude-plugin/plugin.json
-#       ├── commands/
-#       ├── hooks/
-#       └── iter (binary)
+# Create output structure
+# Plugin at bin/ root, marketplace manifest in bin/.claude-plugin/
 rm -rf "$PROJECT_DIR/bin"
 mkdir -p "$PROJECT_DIR/bin/.claude-plugin"
-mkdir -p "$PROJECT_DIR/bin/plugins/iter/.claude-plugin"
-mkdir -p "$PROJECT_DIR/bin/plugins/iter/commands"
-mkdir -p "$PROJECT_DIR/bin/plugins/iter/hooks"
+mkdir -p "$PROJECT_DIR/bin/commands"
+mkdir -p "$PROJECT_DIR/bin/hooks"
 
-# Build binary with version via ldflags
-echo "Compiling binary..."
+# Build binary
+echo "Compiling..."
 cd "$PROJECT_DIR"
 go mod download
-go build -ldflags "-X 'main.version=${VERSION}'" -o "$PROJECT_DIR/bin/plugins/iter/iter" "$PROJECT_DIR/cmd/iter"
-chmod +x "$PROJECT_DIR/bin/plugins/iter/iter"
+go build -ldflags "-X 'main.version=${VERSION}'" -o "$PROJECT_DIR/bin/iter" "$PROJECT_DIR/cmd/iter"
+chmod +x "$PROJECT_DIR/bin/iter"
 
-# Copy plugin manifests
+# Copy marketplace manifest (in .claude-plugin for marketplace install)
 cp "$PROJECT_DIR/config/marketplace.json" "$PROJECT_DIR/bin/.claude-plugin/marketplace.json"
-cp "$PROJECT_DIR/config/plugin.json" "$PROJECT_DIR/bin/plugins/iter/.claude-plugin/plugin.json"
 
-# Copy command stubs
-cp "$PROJECT_DIR/commands/iter.md" "$PROJECT_DIR/bin/plugins/iter/commands/"
-cp "$PROJECT_DIR/commands/iter-workflow.md" "$PROJECT_DIR/bin/plugins/iter/commands/"
-cp "$PROJECT_DIR/commands/iter-index.md" "$PROJECT_DIR/bin/plugins/iter/commands/"
-cp "$PROJECT_DIR/commands/iter-search.md" "$PROJECT_DIR/bin/plugins/iter/commands/"
-cp "$PROJECT_DIR/commands/iter-version.md" "$PROJECT_DIR/bin/plugins/iter/commands/"
+# Copy plugin manifest, commands, and hooks (at bin/ root for --plugin-dir)
+cp "$PROJECT_DIR/config/plugin.json" "$PROJECT_DIR/bin/plugin.json"
+cp "$PROJECT_DIR/commands/"*.md "$PROJECT_DIR/bin/commands/"
+cp "$PROJECT_DIR/hooks/hooks.json" "$PROJECT_DIR/bin/hooks/"
 
-# Copy hooks (adjust path: binary is at plugin root)
-sed 's|\${CLAUDE_PLUGIN_ROOT}/bin/iter|\${CLAUDE_PLUGIN_ROOT}/iter|g' \
-    "$PROJECT_DIR/hooks/hooks.json" > "$PROJECT_DIR/bin/plugins/iter/hooks/hooks.json"
-
-# Verify binary
-echo "Verifying build..."
-"$PROJECT_DIR/bin/plugins/iter/iter" help > /dev/null 2>&1 || {
+# Verify
+"$PROJECT_DIR/bin/iter" help > /dev/null 2>&1 || {
     echo "Error: binary verification failed"
     exit 1
 }
-
-# Validate marketplace
-echo "Validating marketplace..."
-if command -v claude &> /dev/null; then
-    claude plugin validate "$PROJECT_DIR/bin" 2>/dev/null || true
-fi
 
 echo ""
 echo "Build complete: $PROJECT_DIR/bin/"
 echo "Version: ${VERSION}"
 echo ""
-echo "Marketplace structure:"
-find "$PROJECT_DIR/bin" -type f | sed "s|$PROJECT_DIR/||" | sort
-echo ""
-echo "Installation:"
-echo "  1. Add marketplace:  claude plugin marketplace add $PROJECT_DIR/bin"
-echo "  2. Install plugin:   claude plugin install iter@$MARKETPLACE_NAME"
-echo ""
-echo "Management:"
-echo "  - Update:    claude plugin update iter@$MARKETPLACE_NAME"
-echo "  - Uninstall: claude plugin uninstall iter@$MARKETPLACE_NAME"
-echo "  - Disable:   claude plugin disable iter@$MARKETPLACE_NAME"
-echo ""
-echo "For development (no install needed):"
-echo "  claude --plugin-dir $PROJECT_DIR/bin/plugins/iter"
+find "$PROJECT_DIR/bin" -type f | sed "s|$PROJECT_DIR/bin/||" | sort
