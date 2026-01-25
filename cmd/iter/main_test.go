@@ -2,14 +2,11 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
-	"time"
 )
 
 // TestSKILLMDFormat validates that all SKILL.md files have required fields
@@ -358,127 +355,6 @@ func TestBinaryCommands(t *testing.T) {
 			t.Error("version should not be empty")
 		}
 	})
-}
-
-// TestDockerIntegration runs the Docker integration test
-// This test requires Docker to be installed and running
-func TestDockerIntegration(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping Docker integration test in short mode")
-	}
-
-	// Check if Docker is available
-	dockerCheck := exec.Command("docker", "info")
-	if err := dockerCheck.Run(); err != nil {
-		t.Skip("Docker not available, skipping integration test")
-	}
-
-	projectRoot := findTestProjectRoot(t)
-	testDockerDir := filepath.Join(projectRoot, "test", "docker")
-
-	// Check if test/docker directory exists
-	if _, err := os.Stat(testDockerDir); os.IsNotExist(err) {
-		t.Skip("test/docker directory not found")
-	}
-
-	// Create results directory with timestamp
-	timestamp := time.Now().Format("20060102-150405")
-	resultsDir := filepath.Join(projectRoot, "test", "results", timestamp+"-docker")
-	if err := os.MkdirAll(resultsDir, 0755); err != nil {
-		t.Fatalf("Failed to create results directory: %v", err)
-	}
-
-	// Open log file
-	logPath := filepath.Join(resultsDir, "test-output.log")
-	logFile, err := os.Create(logPath)
-	if err != nil {
-		t.Fatalf("Failed to create log file: %v", err)
-	}
-	defer logFile.Close()
-
-	// Build Docker image
-	t.Log("Building Docker test image...")
-	buildCmd := exec.Command("docker", "build", "--no-cache", "-t", "iter-plugin-test", "-f", "test/docker/Dockerfile", ".")
-	buildCmd.Dir = projectRoot
-	buildOutput, err := buildCmd.CombinedOutput()
-	logFile.WriteString("=== Docker Build Output ===\n")
-	logFile.Write(buildOutput)
-	logFile.WriteString("\n")
-
-	if err != nil {
-		t.Fatalf("Failed to build Docker image: %v\nOutput: %s", err, buildOutput)
-	}
-
-	// Run Docker container
-	t.Log("Running Docker test container...")
-
-	// Pass API key if available for full integration test
-	runArgs := []string{"run", "--rm"}
-	if apiKey := os.Getenv("ANTHROPIC_API_KEY"); apiKey != "" {
-		t.Log("API key detected, running full Claude integration test")
-		runArgs = append(runArgs, "-e", "ANTHROPIC_API_KEY="+apiKey)
-	} else {
-		t.Log("No API key, running offline simulation test")
-	}
-	runArgs = append(runArgs, "iter-plugin-test")
-
-	runCmd := exec.Command("docker", runArgs...)
-	runCmd.Dir = projectRoot
-	output, err := runCmd.CombinedOutput()
-
-	// Write output to log file
-	logFile.WriteString("=== Docker Run Output ===\n")
-	logFile.Write(output)
-	logFile.WriteString("\n")
-
-	// Log output for debugging
-	t.Logf("Docker test output:\n%s", output)
-	t.Logf("Results saved to: %s", resultsDir)
-
-	// Write result file
-	resultPath := filepath.Join(resultsDir, "result.txt")
-	status := "PASS"
-	if err != nil {
-		status = "FAIL"
-	}
-
-	// Verify expected output
-	outputStr := string(output)
-	expectedStrings := []string{
-		"Successfully added marketplace: iter-local",
-		"Successfully installed plugin: iter@iter-local",
-		"OK: iter@iter-local found in settings",
-		"OK: SKILL.md has 'name' field",
-		"OK: marketplace.json has 'skills' field",
-		"OK: iter binary executes correctly",
-		"OK: iter help works",
-		"OK: iter run command executes correctly",
-		"ALL TESTS PASSED",
-	}
-
-	var missing []string
-	for _, expected := range expectedStrings {
-		if !strings.Contains(outputStr, expected) {
-			missing = append(missing, expected)
-			status = "FAIL"
-		}
-	}
-
-	// Write result file
-	resultContent := fmt.Sprintf("Status: %s\nTimestamp: %s\nResultsDir: %s\n",
-		status, time.Now().Format(time.RFC3339), resultsDir)
-	if len(missing) > 0 {
-		resultContent += fmt.Sprintf("Missing: %v\n", missing)
-	}
-	os.WriteFile(resultPath, []byte(resultContent), 0644)
-
-	if err != nil {
-		t.Fatalf("Docker integration test failed: %v", err)
-	}
-
-	for _, m := range missing {
-		t.Errorf("Docker test output missing expected string: %q", m)
-	}
 }
 
 // Helper functions

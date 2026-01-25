@@ -39,3 +39,7 @@ bin/
 
 # Claude working dir
 .claude/workdirtest/results/
+test/docker/.env
+
+# Test results
+test/results

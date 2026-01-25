@@ -111,17 +111,11 @@ Created in `.iter/workdir/`:
 
 ## Testing
 
-### Run All Tests
+### Run Unit Tests
 
 ```bash
-# Run all tests including Docker integration (requires Docker)
 go test ./cmd/iter/... -v
-
-# Run only unit tests (faster, no Docker required)
-go test ./cmd/iter/... -v -short
 ```
-
-### Test Coverage
 
 **Unit Tests:**
 - SKILL.md files have required `name` and `description` fields
@@ -130,44 +124,37 @@ go test ./cmd/iter/... -v -short
 - Binary commands function correctly
 - All expected skills exist
 
-**Docker Integration Test** (`TestDockerIntegration`):
-1. Builds Docker image with fresh Claude Code CLI
-2. Adds the local marketplace
-3. Installs the iter plugin
-4. Validates settings and cache structure
-5. Checks SKILL.md format for `name` field
-6. Verifies marketplace.json has `skills` field
-7. Tests the iter binary executes correctly
-8. Checks plugin loading in Claude debug mode
+### Run Docker Integration Tests
 
-### Run Docker Test Standalone
+Docker tests verify `/iter:run` works in Claude. **Requires API key.**
 
 ```bash
-# Offline test (simulates skill execution)
-go run ./test/docker/runner.go
+# Setup: Copy .env.example and add your API key
+cp test/docker/.env.example test/docker/.env
+# Edit test/docker/.env and set ANTHROPIC_API_KEY=sk-ant-...
 
-# Full integration test with Claude API
-ANTHROPIC_API_KEY=sk-... go run ./test/docker/runner.go
+# Run Docker integration tests
+go test ./test/docker/... -v
 ```
+
+**Docker Tests:**
+1. `TestDockerPluginInstallation` - Full installation and `/iter:run` test
+2. `TestIterRunCommandLine` - Tests `claude -p '/iter:run -v'`
+3. `TestIterRunInteractive` - Tests `/iter:run -v` in interactive session
 
 ### Test Results
 
-Test results are saved to `test/results/{timestamp}-{test-name}/`:
+Test results are saved to `test/results/{timestamp}-docker/`:
 - `test-output.log` - Full test output
 - `result.txt` - Pass/fail status and summary
 
-### Full Integration Test
-
-To test `/iter:run` in Claude with a live API:
+### Run Docker Test Directly
 
 ```bash
-# Via Go test
-ANTHROPIC_API_KEY=sk-... go test ./cmd/iter/... -v -run TestDockerIntegration
+# Build image
+docker build -t iter-plugin-test -f test/docker/Dockerfile .
 
-# Via standalone runner
-ANTHROPIC_API_KEY=sk-... go run ./test/docker/runner.go
-
-# Via Docker directly
+# Run with API key
 docker run -e ANTHROPIC_API_KEY=sk-... iter-plugin-test
 ```
 
