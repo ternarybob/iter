@@ -162,23 +162,14 @@ func TestMarketplaceJSON(t *testing.T) {
 					}
 				}
 
-				// Check skills field exists and is an array
-				skills, ok := plugin["skills"]
-				if !ok {
-					t.Errorf("plugin %d missing 'skills' field", i)
-				} else {
-					skillsArr, ok := skills.([]interface{})
-					if !ok {
-						t.Errorf("plugin %d 'skills' field is not an array", i)
-					} else if len(skillsArr) == 0 {
-						t.Errorf("plugin %d has empty 'skills' array", i)
-					}
-				}
+				// Note: skills array is NOT required in marketplace.json
+				// Skills are auto-discovered from the skills/ directory per Claude Code docs
+				// See: https://code.claude.com/docs/en/plugins-reference
 
-				// Check strict field is false (required for skills in marketplace)
+				// Check strict field is false if present (required for custom component paths)
 				strict, ok := plugin["strict"]
 				if ok && strict.(bool) {
-					t.Errorf("plugin %d has strict=true, but skills require strict=false", i)
+					t.Logf("plugin %d has strict=true - custom paths will be ignored", i)
 				}
 			}
 		})

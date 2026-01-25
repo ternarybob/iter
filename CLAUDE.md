@@ -7,9 +7,38 @@ This file provides guidance to Claude Code when working with code in this reposi
 ```bash
 ./scripts/build.sh                # Build plugin from source
 go build -o bin/iter ./cmd/iter   # Build binary only
-go test ./cmd/iter/...            # Run tests
 golangci-lint run                 # Lint
 ```
+
+## Testing
+
+### Unit Tests
+
+```bash
+go test ./cmd/iter/... -v         # Run unit tests
+```
+
+Unit tests verify binary functionality without Docker or API access.
+
+### Docker Integration Tests
+
+```bash
+# Requires ANTHROPIC_API_KEY in environment or test/docker/.env
+ANTHROPIC_API_KEY=sk-... go test ./test/docker/... -v -timeout 15m
+```
+
+Docker tests run **sequentially** in guaranteed order:
+
+1. **PluginInstallation** - Full plugin installation and /iter:run test
+2. **IterRunCommandLine** - Tests `claude -p '/iter:run -v'`
+3. **IterRunInteractive** - Tests `/iter:run -v` in interactive session
+4. **PluginSkillAutoprompt** - Tests skill discoverability
+
+The Docker image is built **once** before all subtests to optimize execution time.
+
+**Results** are saved to `test/results/{timestamp}-docker/`:
+- `test-output.log` - Full test output
+- `result.txt` - Pass/fail status with any missing checks
 
 ## Architecture Overview
 

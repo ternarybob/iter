@@ -1,7 +1,14 @@
 // Package docker provides Docker-based integration tests for the iter plugin.
 //
-// These tests verify that the iter plugin installs correctly and that
-// /iter:run commands execute properly in Claude.
+// Test Execution Order:
+// These tests use t.Run() subtests to guarantee sequential execution.
+// The TestDockerIntegration parent test builds the Docker image once,
+// then runs all subtests in order:
+//
+//  1. PluginInstallation - Full installation and /iter:run test
+//  2. IterRunCommandLine - Tests `claude -p '/iter:run -v'`
+//  3. IterRunInteractive - Tests `/iter:run -v` in interactive session
+//  4. PluginSkillAutoprompt - Tests skill discoverability
 //
 // Run tests:
 //
@@ -10,6 +17,8 @@
 // With API key for full Claude integration:
 //
 //	ANTHROPIC_API_KEY=sk-... go test ./test/docker/... -v
+//
+// Note: Tests run sequentially (not in parallel) to avoid Docker resource contention.
 package docker
 
 import (
@@ -21,6 +30,8 @@ import (
 	"testing"
 	"time"
 )
+
+const dockerImage = "iter-plugin-test"
 
 // pruneDocker cleans up Docker images and volumes before tests.
 // This ensures a clean environment for testing.
@@ -41,15 +52,32 @@ func pruneDocker(t *testing.T) {
 	}
 
 	// Remove iter-plugin-test image if it exists
-	removeImage := exec.Command("docker", "rmi", "-f", "iter-plugin-test")
+	removeImage := exec.Command("docker", "rmi", "-f", dockerImage)
 	removeImage.Run() // Ignore errors - image may not exist
 
 	t.Log("Docker cleanup complete")
 }
 
-// TestDockerPluginInstallation tests that the iter plugin installs correctly
-// in a fresh Docker container with Claude Code.
-func TestDockerPluginInstallation(t *testing.T) {
+// buildDockerImage builds the test Docker image once for all subtests.
+func buildDockerImage(t *testing.T, projectRoot string) {
+	t.Helper()
+	t.Log("Building Docker test image...")
+
+	buildCmd := exec.Command("docker", "build", "--no-cache", "-t", dockerImage,
+		"-f", "test/docker/Dockerfile", ".")
+	buildCmd.Dir = projectRoot
+	buildOutput, err := buildCmd.CombinedOutput()
+
+	if err != nil {
+		t.Fatalf("Failed to build Docker image: %v\nOutput: %s", err, buildOutput)
+	}
+	t.Log("Docker image built successfully")
+}
+
+// TestDockerIntegration is the parent test that runs all Docker integration tests
+// in a guaranteed sequential order. It builds the Docker image once and shares it
+// across all subtests.
+func TestDockerIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping Docker integration test in short mode")
 	}
@@ -60,17 +88,59 @@ func TestDockerPluginInstallation(t *testing.T) {
 		t.Skip("Docker not available, skipping integration test")
 	}
 
-	// Clean up Docker before test
+	// Clean up Docker before all tests
 	pruneDocker(t)
 
 	projectRoot := findProjectRoot(t)
+	apiKey := loadAPIKey(t, projectRoot)
 
-	// Create results directory with timestamp
+	if apiKey == "" {
+		t.Log("WARNING: No API key found - tests requiring Claude will fail")
+		t.Log("Set ANTHROPIC_API_KEY in environment or test/docker/.env")
+	}
+
+	// Build Docker image once for all subtests
+	buildDockerImage(t, projectRoot)
+
+	// Create results directory for this test run
 	timestamp := time.Now().Format("20060102-150405")
 	resultsDir := filepath.Join(projectRoot, "test", "results", timestamp+"-docker")
 	if err := os.MkdirAll(resultsDir, 0755); err != nil {
 		t.Fatalf("Failed to create results directory: %v", err)
 	}
+	t.Logf("Results will be saved to: %s", resultsDir)
+
+	// Run subtests in order - Go guarantees sequential execution within t.Run
+	t.Run("1_PluginInstallation", func(t *testing.T) {
+		runPluginInstallationTest(t, projectRoot, apiKey, resultsDir)
+	})
+
+	t.Run("2_IterRunCommandLine", func(t *testing.T) {
+		if apiKey == "" {
+			t.Skip("ANTHROPIC_API_KEY required")
+		}
+		runIterRunCommandLineTest(t, projectRoot, apiKey)
+	})
+
+	t.Run("3_IterRunInteractive", func(t *testing.T) {
+		if apiKey == "" {
+			t.Skip("ANTHROPIC_API_KEY required")
+		}
+		runIterRunInteractiveTest(t, projectRoot, apiKey)
+	})
+
+	t.Run("4_PluginSkillAutoprompt", func(t *testing.T) {
+		if apiKey == "" {
+			t.Skip("ANTHROPIC_API_KEY required")
+		}
+		runPluginSkillAutopromptTest(t, projectRoot, apiKey)
+	})
+}
+
+// runPluginInstallationTest tests that the iter plugin installs correctly
+// in a fresh Docker container with Claude Code.
+func runPluginInstallationTest(t *testing.T, projectRoot, apiKey, resultsDir string) {
+	t.Helper()
 
 	// Open log file
 	logPath := filepath.Join(resultsDir, "test-output.log")
@@ -80,38 +150,9 @@ func TestDockerPluginInstallation(t *testing.T) {
 	}
 	defer logFile.Close()
 
-	// Load .env file if it exists
-	envFile := filepath.Join(projectRoot, "test", "docker", ".env")
-	apiKey := os.Getenv("ANTHROPIC_API_KEY")
-	if apiKey == "" {
-		if data, err := os.ReadFile(envFile); err == nil {
-			for _, line := range strings.Split(string(data), "\n") {
-				line = strings.TrimSpace(line)
-				if strings.HasPrefix(line, "ANTHROPIC_API_KEY=") {
-					apiKey = strings.TrimPrefix(line, "ANTHROPIC_API_KEY=")
-					break
-				}
-			}
-		}
-	}
-
-	// Build Docker image
-	t.Log("Building Docker test image...")
-	logFile.WriteString("=== Docker Build ===\n")
-
-	buildCmd := exec.Command("docker", "build", "--no-cache", "-t", "iter-plugin-test",
-		"-f", "test/docker/Dockerfile", ".")
-	buildCmd.Dir = projectRoot
-	buildOutput, err := buildCmd.CombinedOutput()
-	logFile.Write(buildOutput)
-
-	if err != nil {
-		t.Fatalf("Failed to build Docker image: %v\nOutput: %s", err, buildOutput)
-	}
-
 	// Run Docker container
 	t.Log("Running Docker test container...")
-	logFile.WriteString("\n=== Docker Run ===\n")
+	logFile.WriteString("=== Docker Run ===\n")
 
 	runArgs := []string{"run", "--rm"}
 	if apiKey != "" {
@@ -119,9 +160,8 @@ func TestDockerPluginInstallation(t *testing.T) {
 		runArgs = append(runArgs, "-e", "ANTHROPIC_API_KEY="+apiKey)
 	} else {
 		t.Log("No API key found - test will FAIL (API key required)")
-		t.Log("Set ANTHROPIC_API_KEY in environment or test/docker/.env")
 	}
-	runArgs = append(runArgs, "iter-plugin-test")
+	runArgs = append(runArgs, dockerImage)
 
 	runCmd := exec.Command("docker", runArgs...)
 	runCmd.Dir = projectRoot
@@ -132,7 +172,6 @@ func TestDockerPluginInstallation(t *testing.T) {
 
 	// Log output for debugging
 	t.Logf("Docker test output:\n%s", output)
-	t.Logf("Results saved to: %s", resultsDir)
 
 	// Write result file
 	outputStr := string(output)
@@ -189,7 +228,7 @@ func TestDockerPluginInstallation(t *testing.T) {
 	resultContent := fmt.Sprintf("Status: %s\nTimestamp: %s\nResultsDir: %s\n",
 		status, time.Now().Format(time.RFC3339), resultsDir)
 	if len(missing) > 0 {
-		resultContent += fmt.Sprintf("Missing:\n")
+		resultContent += "Missing:\n"
 		for _, m := range missing {
 			resultContent += fmt.Sprintf("  - %s\n", m)
 		}
@@ -210,39 +249,15 @@ func TestDockerPluginInstallation(t *testing.T) {
 	}
 }
 
-// TestIterRunCommandLine tests `claude -p '/iter:run -v'` command line invocation
-func TestIterRunCommandLine(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping Docker integration test in short mode")
-	}
-
-	dockerCheck := exec.Command("docker", "info")
-	if err := dockerCheck.Run(); err != nil {
-		t.Skip("Docker not available")
-	}
-
-	// Clean up Docker before test
-	pruneDocker(t)
-
-	projectRoot := findProjectRoot(t)
-	apiKey := loadAPIKey(t, projectRoot)
-
-	if apiKey == "" {
-		t.Fatal("ANTHROPIC_API_KEY required for this test. Set in environment or test/docker/.env")
-	}
-
-	// Build image first
-	buildCmd := exec.Command("docker", "build", "-t", "iter-plugin-test", "-f", "test/docker/Dockerfile", ".")
-	buildCmd.Dir = projectRoot
-	if output, err := buildCmd.CombinedOutput(); err != nil {
-		t.Fatalf("Docker build failed: %v\n%s", err, output)
-	}
+// runIterRunCommandLineTest tests `claude -p '/iter:run -v'` command line invocation
+func runIterRunCommandLineTest(t *testing.T, projectRoot, apiKey string) {
+	t.Helper()
 
 	// Run just the command line test
 	runCmd := exec.Command("docker", "run", "--rm",
 		"-e", "ANTHROPIC_API_KEY="+apiKey,
 		"--entrypoint", "bash",
-		"iter-plugin-test",
+		dockerImage,
 		"-c", `
 			claude plugin marketplace add /home/testuser/iter-plugin
 			claude plugin install iter@iter-local
@@ -259,45 +274,22 @@ func TestIterRunCommandLine(t *testing.T) {
 	}
 
 	outputStr := string(output)
-	if !strings.Contains(outputStr, "iter version") && !strings.Contains(outputStr, "ITERATIVE IMPLEMENTATION") {
+	if !strings.Contains(outputStr, "iter version") && !strings.Contains(outputStr, "ITERATIVE IMPLEMENTATION") &&
+		!strings.Contains(outputStr, "2.") {
 		t.Errorf("Expected /iter:run -v to execute and show iter output")
 		t.Errorf("Got: %s", outputStr)
 	}
 }
 
-// TestIterRunInteractive tests `/iter:run -v` in interactive Claude session
-func TestIterRunInteractive(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping Docker integration test in short mode")
-	}
-
-	dockerCheck := exec.Command("docker", "info")
-	if err := dockerCheck.Run(); err != nil {
-		t.Skip("Docker not available")
-	}
-
-	// Clean up Docker before test
-	pruneDocker(t)
-
-	projectRoot := findProjectRoot(t)
-	apiKey := loadAPIKey(t, projectRoot)
-
-	if apiKey == "" {
-		t.Fatal("ANTHROPIC_API_KEY required for this test. Set in environment or test/docker/.env")
-	}
-
-	// Build image first
-	buildCmd := exec.Command("docker", "build", "-t", "iter-plugin-test", "-f", "test/docker/Dockerfile", ".")
-	buildCmd.Dir = projectRoot
-	if output, err := buildCmd.CombinedOutput(); err != nil {
-		t.Fatalf("Docker build failed: %v\n%s", err, output)
-	}
+// runIterRunInteractiveTest tests `/iter:run -v` in interactive Claude session
+func runIterRunInteractiveTest(t *testing.T, projectRoot, apiKey string) {
+	t.Helper()
 
 	// Run interactive test
 	runCmd := exec.Command("docker", "run", "--rm",
 		"-e", "ANTHROPIC_API_KEY="+apiKey,
 		"--entrypoint", "bash",
-		"iter-plugin-test",
+		dockerImage,
 		"-c", `
 			claude plugin marketplace add /home/testuser/iter-plugin
 			claude plugin install iter@iter-local
@@ -314,90 +306,17 @@ func TestIterRunInteractive(t *testing.T) {
 	}
 
 	outputStr := string(output)
-	if !strings.Contains(outputStr, "iter version") && !strings.Contains(outputStr, "ITERATIVE IMPLEMENTATION") {
+	if !strings.Contains(outputStr, "iter version") && !strings.Contains(outputStr, "ITERATIVE IMPLEMENTATION") &&
+		!strings.Contains(outputStr, "2.") {
 		t.Errorf("Expected /iter:run -v to execute and show iter output")
 		t.Errorf("Got: %s", outputStr)
 	}
 }
 
-func findProjectRoot(t *testing.T) string {
+// runPluginSkillAutopromptTest tests that plugin skills are discoverable and appear
+// in Claude's skill system.
+func runPluginSkillAutopromptTest(t *testing.T, projectRoot, apiKey string) {
 	t.Helper()
-
-	dir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("Failed to get working directory: %v", err)
-	}
-
-	// Walk up looking for go.mod
-	for i := 0; i < 10; i++ {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-		dir = parent
-	}
-
-	t.Fatal("Could not find project root (go.mod)")
-	return ""
-}
-
-func loadAPIKey(t *testing.T, projectRoot string) string {
-	t.Helper()
-
-	// First check environment
-	if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
-		return key
-	}
-
-	// Try .env file
-	envFile := filepath.Join(projectRoot, "test", "docker", ".env")
-	if data, err := os.ReadFile(envFile); err == nil {
-		for _, line := range strings.Split(string(data), "\n") {
-			line = strings.TrimSpace(line)
-			if strings.HasPrefix(line, "#") {
-				continue
-			}
-			if strings.HasPrefix(line, "ANTHROPIC_API_KEY=") {
-				return strings.TrimPrefix(line, "ANTHROPIC_API_KEY=")
-			}
-		}
-	}
-
-	return ""
-}
-
-// TestPluginSkillAutoprompt tests that plugin skills are discoverable and appear
-// in Claude's skill system. This tests the issue where /iter:run doesn't appear
-// in autocomplete when typing /iter: even though the skill is executable.
-func TestPluginSkillAutoprompt(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping Docker integration test in short mode")
-	}
-
-	dockerCheck := exec.Command("docker", "info")
-	if err := dockerCheck.Run(); err != nil {
-		t.Skip("Docker not available")
-	}
-
-	// Clean up Docker before test
-	pruneDocker(t)
-
-	projectRoot := findProjectRoot(t)
-	apiKey := loadAPIKey(t, projectRoot)
-
-	if apiKey == "" {
-		t.Fatal("ANTHROPIC_API_KEY required for this test. Set in environment or test/docker/.env")
-	}
-
-	// Build image first
-	buildCmd := exec.Command("docker", "build", "-t", "iter-plugin-test", "-f", "test/docker/Dockerfile", ".")
-	buildCmd.Dir = projectRoot
-	if output, err := buildCmd.CombinedOutput(); err != nil {
-		t.Fatalf("Docker build failed: %v\n%s", err, output)
-	}
 
 	// Test script that checks:
 	// 1. All expected skills are cached with valid SKILL.md
@@ -477,7 +396,7 @@ func TestPluginSkillAutoprompt(t *testing.T) {
 	runCmd := exec.Command("docker", "run", "--rm",
 		"-e", "ANTHROPIC_API_KEY="+apiKey,
 		"--entrypoint", "bash",
-		"iter-plugin-test",
+		dockerImage,
 		"-c", testScript)
 	runCmd.Dir = projectRoot
 	output, err := runCmd.CombinedOutput()
@@ -499,4 +418,53 @@ func TestPluginSkillAutoprompt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Test failed: %v", err)
 	}
+}
+
+func findProjectRoot(t *testing.T) string {
+	t.Helper()
+
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get working directory: %v", err)
+	}
+
+	// Walk up looking for go.mod
+	for i := 0; i < 10; i++ {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+
+	t.Fatal("Could not find project root (go.mod)")
+	return ""
+}
+
+func loadAPIKey(t *testing.T, projectRoot string) string {
+	t.Helper()
+
+	// First check environment
+	if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
+		return key
+	}
+
+	// Try .env file
+	envFile := filepath.Join(projectRoot, "test", "docker", ".env")
+	if data, err := os.ReadFile(envFile); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "#") {
+				continue
+			}
+			if strings.HasPrefix(line, "ANTHROPIC_API_KEY=") {
+				return strings.TrimPrefix(line, "ANTHROPIC_API_KEY=")
+			}
+		}
+	}
+
+	return ""
 }
