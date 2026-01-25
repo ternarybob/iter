@@ -109,27 +109,102 @@ Created in `.iter/workdir/`:
 | `step_N_impl.md` | Implementation notes |
 | `summary.md` | Completion summary |
 
+## Testing
+
+### Run All Tests
+
+```bash
+# Run all tests including Docker integration (requires Docker)
+go test ./cmd/iter/... -v
+
+# Run only unit tests (faster, no Docker required)
+go test ./cmd/iter/... -v -short
+```
+
+### Test Coverage
+
+**Unit Tests:**
+- SKILL.md files have required `name` and `description` fields
+- marketplace.json has correct structure with `skills` array
+- plugin.json has required fields and no conflicting `skills` field
+- Binary commands function correctly
+- All expected skills exist
+
+**Docker Integration Test** (`TestDockerIntegration`):
+1. Builds Docker image with fresh Claude Code CLI
+2. Adds the local marketplace
+3. Installs the iter plugin
+4. Validates settings and cache structure
+5. Checks SKILL.md format for `name` field
+6. Verifies marketplace.json has `skills` field
+7. Tests the iter binary executes correctly
+8. Checks plugin loading in Claude debug mode
+
+### Run Docker Test Standalone
+
+```bash
+# Offline test (simulates skill execution)
+go run ./test/docker/runner.go
+
+# Full integration test with Claude API
+ANTHROPIC_API_KEY=sk-... go run ./test/docker/runner.go
+```
+
+### Test Results
+
+Test results are saved to `test/results/{timestamp}-{test-name}/`:
+- `test-output.log` - Full test output
+- `result.txt` - Pass/fail status and summary
+
+### Full Integration Test
+
+To test `/iter:run` in Claude with a live API:
+
+```bash
+# Via Go test
+ANTHROPIC_API_KEY=sk-... go test ./cmd/iter/... -v -run TestDockerIntegration
+
+# Via standalone runner
+ANTHROPIC_API_KEY=sk-... go run ./test/docker/runner.go
+
+# Via Docker directly
+docker run -e ANTHROPIC_API_KEY=sk-... iter-plugin-test
+```
+
+### Manual Testing
+
+After installation, verify the plugin works:
+
+```bash
+# Check plugin is installed
+claude plugin list
+
+# In Claude Code, type /iter and verify it appears in suggestions
+# Run the command
+/iter "test task"
+```
+
 ## Project Structure
 
 ```
 iter/
 ├── config/
-│   ├── plugin.json              # Plugin manifest
-│   └── marketplace.json         # Marketplace manifest
-├── commands/                    # Command definitions
-│   ├── iter.md
-│   ├── iter-workflow.md
-│   ├── iter-index.md
-│   └── iter-search.md
+│   ├── plugin.json              # Plugin manifest template
+│   └── marketplace.json         # Marketplace manifest template
+├── skills/                      # Skill definitions (source)
+│   ├── iter/SKILL.md
+│   ├── iter-workflow/SKILL.md
+│   ├── iter-index/SKILL.md
+│   └── iter-search/SKILL.md
 ├── hooks/hooks.json             # Stop hook
 ├── cmd/iter/main.go             # Binary source (all logic here)
 ├── scripts/build.sh             # Build script
 └── bin/                         # Build output (plugin root)
     ├── .claude-plugin/
+    │   ├── plugin.json          # Plugin manifest
     │   └── marketplace.json     # Marketplace manifest
-    ├── plugin.json              # Plugin manifest
     ├── iter                     # Compiled binary
-    ├── commands/                # Command definitions
+    ├── skills/                  # Skill definitions
     └── hooks/                   # Hook definitions
 ```
 

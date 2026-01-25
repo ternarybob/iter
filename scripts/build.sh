@@ -38,7 +38,7 @@ go mod download
 go build -ldflags "-X 'main.version=${VERSION}'" -o "$PROJECT_DIR/bin/iter" "$PROJECT_DIR/cmd/iter"
 chmod +x "$PROJECT_DIR/bin/iter"
 
-# Copy marketplace manifest (in .claude-plugin for marketplace install)
+# Copy marketplace manifest to .claude-plugin (where Claude Code expects it)
 cp "$PROJECT_DIR/config/marketplace.json" "$PROJECT_DIR/bin/.claude-plugin/marketplace.json"
 
 # Copy plugin manifest to .claude-plugin (where Claude Code expects it)

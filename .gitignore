@@ -38,4 +38,4 @@ bin/
 .iter/
 
 # Claude working dir
-.claude/workdir
+.claude/workdirtest/results/

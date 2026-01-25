@@ -310,7 +310,7 @@ description: Run iter default workflow (wrapper for iter plugin)
 Execute the plugin skill ` + "``" + `/iter:run` + "``" + ` with the same arguments.
 
 Arguments:
-`+ "`" + `$ARGUMENTS
+` + "`" + `$ARGUMENTS
 "@ | Out-File "$d\SKILL.md" -Encoding utf8
 
 Restart Claude Code after running the installer.
@@ -677,13 +677,13 @@ OS Detection:
 
 func cmdVersion() {
 	fmt.Printf("iter version %s\n", version)
-	fmt.Println(installerSnippet)
+	fmt.Print(installerSnippet)
 }
 
 // cmdInstall prints the installer snippet for setting up /iter shortcut.
 func cmdInstall() {
 	fmt.Println("iter - Adversarial iterative implementation")
-	fmt.Println(installerSnippet)
+	fmt.Print(installerSnippet)
 }
 
 // summarizeTask creates a short slug from a task description.

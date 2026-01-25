@@ -1,0 +1,28 @@
+Building iter plugin...
+Project directory: /mnt/c/development/ternarybob/iter
+Found Go version: 1.22
+Downloading dependencies...
+go: no module dependencies to download
+Building iter binary...
+Copying plugin files...
+Verifying build...
+
+Build complete!
+
+Plugin built at: /mnt/c/development/ternarybob/iter/bin/
+
+Contents:
+total 2664
+drwxrwxrwx 1 bobmc bobmc    4096 Jan 21 09:09 .
+drwxrwxrwx 1 bobmc bobmc    4096 Jan 21 08:34 ..
+drwxrwxrwx 1 bobmc bobmc    4096 Jan 21 09:09 commands
+drwxrwxrwx 1 bobmc bobmc    4096 Jan 21 09:09 hooks
+-rwxrwxrwx 1 bobmc bobmc 2727095 Jan 21 09:09 iter
+drwxrwxrwx 1 bobmc bobmc    4096 Jan 21 09:09 plugin-skills
+-rwxrwxrwx 1 bobmc bobmc     495 Jan 21 09:09 plugin.json
+
+To use the iter plugin with Claude Code:
+  claude --plugin-dir /mnt/c/development/ternarybob/iter/bin
+
+Or add to your claude config:
+  {"pluginDirs": ["/mnt/c/development/ternarybob/iter/bin"]}

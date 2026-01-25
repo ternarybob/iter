@@ -1,0 +1,3 @@
+Status: PASS
+Timestamp: 2026-01-25T14:52:07+11:00
+ResultsDir: /mnt/c/development/ternarybob/iter/test/results/20260125-145111-docker

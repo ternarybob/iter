@@ -10,11 +10,20 @@
     {
       "name": "iter",
       "description": "Adversarial iterative implementation - structured loop until requirements/tests pass",
-      "version": "2.1.20260123-1515",
+      "version": "2.1.20260125-0832",
       "author": {
         "name": "ternarybob"
       },
       "source": "./",
+      "strict": false,
+      "skills": [
+        "./skills/iter",
+        "./skills/iter-workflow",
+        "./skills/iter-index",
+        "./skills/iter-search",
+        "./skills/run",
+        "./skills/install"
+      ],
       "category": "development",
       "homepage": "https://github.com/ternarybob/iter"
     }

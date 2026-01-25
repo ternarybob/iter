@@ -1,4 +1,5 @@
 ---
+name: install
 description: Install /iter shortcut skill (creates wrapper in ~/.claude/skills/iter)
 allowed-tools: ["Bash", "Write"]
 ---
