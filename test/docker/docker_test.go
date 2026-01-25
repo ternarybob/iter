@@ -22,6 +22,31 @@ import (
 	"time"
 )
 
+// pruneDocker cleans up Docker images and volumes before tests.
+// This ensures a clean environment for testing.
+func pruneDocker(t *testing.T) {
+	t.Helper()
+	t.Log("Pruning Docker images and volumes...")
+
+	// Prune unused images
+	pruneImages := exec.Command("docker", "image", "prune", "-af")
+	if output, err := pruneImages.CombinedOutput(); err != nil {
+		t.Logf("Warning: docker image prune failed: %v\n%s", err, output)
+	}
+
+	// Prune unused volumes
+	pruneVolumes := exec.Command("docker", "volume", "prune", "-f")
+	if output, err := pruneVolumes.CombinedOutput(); err != nil {
+		t.Logf("Warning: docker volume prune failed: %v\n%s", err, output)
+	}
+
+	// Remove iter-plugin-test image if it exists
+	removeImage := exec.Command("docker", "rmi", "-f", "iter-plugin-test")
+	removeImage.Run() // Ignore errors - image may not exist
+
+	t.Log("Docker cleanup complete")
+}
+
 // TestDockerPluginInstallation tests that the iter plugin installs correctly
 // in a fresh Docker container with Claude Code.
 func TestDockerPluginInstallation(t *testing.T) {
@@ -34,6 +59,9 @@ func TestDockerPluginInstallation(t *testing.T) {
 	if err := dockerCheck.Run(); err != nil {
 		t.Skip("Docker not available, skipping integration test")
 	}
+
+	// Clean up Docker before test
+	pruneDocker(t)
 
 	projectRoot := findProjectRoot(t)
 
@@ -117,7 +145,7 @@ func TestDockerPluginInstallation(t *testing.T) {
 		"Successfully installed plugin: iter@iter-local",
 		"OK: iter@iter-local found in settings",
 		"OK: SKILL.md has 'name' field",
-		"OK: marketplace.json has 'skills' field",
+		"OK: marketplace.json present",
 		"OK: iter binary executes correctly",
 		"OK: iter help works",
 	}
@@ -137,6 +165,18 @@ func TestDockerPluginInstallation(t *testing.T) {
 	}
 	if !strings.Contains(outputStr, "OK: /iter:run -v executed in interactive mode") {
 		missing = append(missing, "OK: /iter:run -v executed in interactive mode")
+		status = "FAIL"
+	}
+
+	// Check SessionStart hook installed the /iter wrapper
+	if !strings.Contains(outputStr, "OK: /iter wrapper skill installed") {
+		missing = append(missing, "OK: /iter wrapper skill installed")
+		status = "FAIL"
+	}
+
+	// Check /iter -v shortcut works
+	if !strings.Contains(outputStr, "OK: /iter -v executed") {
+		missing = append(missing, "OK: /iter -v executed")
 		status = "FAIL"
 	}
 
@@ -180,6 +220,9 @@ func TestIterRunCommandLine(t *testing.T) {
 	if err := dockerCheck.Run(); err != nil {
 		t.Skip("Docker not available")
 	}
+
+	// Clean up Docker before test
+	pruneDocker(t)
 
 	projectRoot := findProjectRoot(t)
 	apiKey := loadAPIKey(t, projectRoot)
@@ -232,6 +275,9 @@ func TestIterRunInteractive(t *testing.T) {
 	if err := dockerCheck.Run(); err != nil {
 		t.Skip("Docker not available")
 	}
+
+	// Clean up Docker before test
+	pruneDocker(t)
 
 	projectRoot := findProjectRoot(t)
 	apiKey := loadAPIKey(t, projectRoot)
@@ -321,4 +367,136 @@ func loadAPIKey(t *testing.T, projectRoot string) string {
 	}
 
 	return ""
+}
+
+// TestPluginSkillAutoprompt tests that plugin skills are discoverable and appear
+// in Claude's skill system. This tests the issue where /iter:run doesn't appear
+// in autocomplete when typing /iter: even though the skill is executable.
+func TestPluginSkillAutoprompt(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping Docker integration test in short mode")
+	}
+
+	dockerCheck := exec.Command("docker", "info")
+	if err := dockerCheck.Run(); err != nil {
+		t.Skip("Docker not available")
+	}
+
+	// Clean up Docker before test
+	pruneDocker(t)
+
+	projectRoot := findProjectRoot(t)
+	apiKey := loadAPIKey(t, projectRoot)
+
+	if apiKey == "" {
+		t.Fatal("ANTHROPIC_API_KEY required for this test. Set in environment or test/docker/.env")
+	}
+
+	// Build image first
+	buildCmd := exec.Command("docker", "build", "-t", "iter-plugin-test", "-f", "test/docker/Dockerfile", ".")
+	buildCmd.Dir = projectRoot
+	if output, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("Docker build failed: %v\n%s", err, output)
+	}
+
+	// Test script that checks:
+	// 1. All expected skills are cached with valid SKILL.md
+	// 2. Skills are discoverable (no "Unknown skill" error)
+	// 3. Skills appear in plugin list --json output
+	testScript := `
+		set -e
+
+		# Install plugin
+		claude plugin marketplace add /home/testuser/iter-plugin
+		claude plugin install iter@iter-local
+
+		# Get plugin install path
+		PLUGIN_PATH=$(claude plugin list --json | jq -r '.[] | select(.id == "iter@iter-local") | .installPath')
+		echo "Plugin path: $PLUGIN_PATH"
+
+		# Expected skills
+		EXPECTED_SKILLS="iter run iter-workflow iter-index iter-search install"
+
+		echo ""
+		echo "=== Testing skill cache structure ==="
+		for skill in $EXPECTED_SKILLS; do
+			SKILL_FILE="$PLUGIN_PATH/skills/$skill/SKILL.md"
+			if [ -f "$SKILL_FILE" ]; then
+				# Check SKILL.md has required fields
+				if grep -q "^name:" "$SKILL_FILE"; then
+					echo "OK: $skill skill has valid SKILL.md with name field"
+				else
+					echo "FAIL: $skill skill SKILL.md missing name field"
+					exit 1
+				fi
+			else
+				echo "FAIL: $skill skill not found at $SKILL_FILE"
+				exit 1
+			fi
+		done
+
+		echo ""
+		echo "=== Testing skill discoverability ==="
+
+		# Create a test git repo (required for Claude)
+		cd /tmp && git init -q && git config user.email "test@test.com" && git config user.name "Test"
+
+		# Test that each plugin skill is recognized (no "Unknown skill" error)
+		# Using -p mode to check skill recognition
+		for skill in run iter iter-workflow; do
+			echo "Testing /iter:$skill recognition..."
+			OUTPUT=$(timeout 60 claude -p "/iter:$skill --help" 2>&1 || true)
+
+			if echo "$OUTPUT" | grep -q "Unknown skill"; then
+				echo "FAIL: /iter:$skill not recognized (Unknown skill error)"
+				echo "Output: $OUTPUT"
+				exit 1
+			else
+				echo "OK: /iter:$skill is recognized by Claude"
+			fi
+		done
+
+		echo ""
+		echo "=== Testing skill execution ==="
+
+		# Test /iter:run -v specifically
+		# Claude may format version with markdown like "version **2.1.xxx**"
+		OUTPUT=$(timeout 60 claude -p "/iter:run -v" 2>&1)
+		if echo "$OUTPUT" | grep -qE "(iter version|ITERATIVE|version.*[0-9]+\.[0-9]+\.[0-9]+|2\.[0-9]+\.[0-9]+-[0-9]+)"; then
+			echo "OK: /iter:run -v executes correctly"
+		else
+			echo "FAIL: /iter:run -v did not execute correctly"
+			echo "Output: $OUTPUT"
+			exit 1
+		fi
+
+		echo ""
+		echo "=== All skill autoprompt tests passed ==="
+	`
+
+	runCmd := exec.Command("docker", "run", "--rm",
+		"-e", "ANTHROPIC_API_KEY="+apiKey,
+		"--entrypoint", "bash",
+		"iter-plugin-test",
+		"-c", testScript)
+	runCmd.Dir = projectRoot
+	output, err := runCmd.CombinedOutput()
+
+	t.Logf("Output:\n%s", output)
+
+	outputStr := string(output)
+
+	// Check for test success markers
+	if !strings.Contains(outputStr, "All skill autoprompt tests passed") {
+		t.Errorf("Skill autoprompt tests did not pass")
+	}
+
+	// Check no skills had "Unknown skill" errors
+	if strings.Contains(outputStr, "Unknown skill") {
+		t.Errorf("Some skills were not recognized by Claude")
+	}
+
+	if err != nil {
+		t.Fatalf("Test failed: %v", err)
+	}
 }

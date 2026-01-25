@@ -1,6 +1,20 @@
 ---
 name: iter-index
-description: Manage the code index (status, build, clear, watch)
-allowed-tools: ["Bash", "Read", "Write", "Edit", "Glob", "Grep"]
+description: Manage the code index for semantic search. Commands: status, build, clear, watch. Use before iter-search for code navigation.
+allowed-tools: ["Bash", "Read"]
 ---
-!`${CLAUDE_PLUGIN_ROOT}/iter index $(printf '%s' "$ARGUMENTS" | sed 's/"/\\"/g')`
+
+## Index Output
+
+!`${CLAUDE_PLUGIN_ROOT}/iter index $(printf '%s' "$ARGUMENTS" | sed 's/"/\\"/g') 2>&1`
+
+## Your Task
+
+Report the index operation result from the output above:
+
+- **status**: Show current index state and statistics
+- **build**: Report build progress and completion
+- **clear**: Confirm index was cleared
+- **watch**: Report watch mode status
+
+Suggest next steps if appropriate (e.g., "run `/iter:iter-search <query>` to search the index").

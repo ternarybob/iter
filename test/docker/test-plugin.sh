@@ -95,12 +95,16 @@ if [ -d "$CACHE_DIR" ]; then
             echo "--- marketplace.json ---"
             cat "$MKT_FILE"
             echo "--- end ---"
+            echo ""
+            echo "OK: marketplace.json present"
 
-            if grep -q '"skills"' "$MKT_FILE"; then
-                echo ""
-                echo "OK: marketplace.json has 'skills' field"
+            # Skills are auto-discovered from skills/ directory, no skills array needed
+            SKILLS_DIR="$CACHE_DIR/$LATEST_VERSION/skills"
+            if [ -d "$SKILLS_DIR" ]; then
+                SKILL_COUNT=$(find "$SKILLS_DIR" -name "SKILL.md" | wc -l)
+                echo "OK: Found $SKILL_COUNT skills in skills/ directory"
             else
-                echo "FAIL: marketplace.json missing 'skills' field"
+                echo "FAIL: skills/ directory not found"
                 exit 1
             fi
         fi
@@ -156,8 +160,13 @@ git init -q
 git config user.email "test@test.com"
 git config user.name "Test"
 
+# Get the expected version from the binary
+EXPECTED_VERSION=$("$ITER_BIN" version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+-[0-9]+' | head -1)
+echo "Expected iter version: $EXPECTED_VERSION"
+echo ""
+
 # Test 1: claude -p "/iter:run -v" (command line invocation)
-echo "[9/10] Testing: claude -p '/iter:run -v' (command line)..."
+echo "[9/12] Testing: claude -p '/iter:run -v' (command line)..."
 echo ""
 
 CLAUDE_CMD_OUTPUT=$(timeout 120 claude -p '/iter:run -v' 2>&1) || CMD_EXIT=$?
@@ -168,19 +177,24 @@ echo "$CLAUDE_CMD_OUTPUT"
 echo "--- end (exit code: $CMD_EXIT) ---"
 echo ""
 
-# Check if /iter:run was recognized and executed
-if echo "$CLAUDE_CMD_OUTPUT" | grep -qiE "(iter version|ITERATIVE IMPLEMENTATION)"; then
+# Check if /iter:run was recognized and executed with correct version
+if echo "$CLAUDE_CMD_OUTPUT" | grep -qE "$EXPECTED_VERSION"; then
+    echo "OK: /iter:run -v executed via command line (version matches)"
+    CMD_TEST_PASS=1
+elif echo "$CLAUDE_CMD_OUTPUT" | grep -qiE "(iter version|ITERATIVE IMPLEMENTATION)"; then
     echo "OK: /iter:run -v executed via command line"
     CMD_TEST_PASS=1
 else
     echo "FAIL: /iter:run -v did NOT execute properly via command line"
-    echo "Expected output to contain 'iter version' or 'ITERATIVE IMPLEMENTATION'"
+    echo "Expected output to contain version '$EXPECTED_VERSION' or 'iter version'"
     CMD_TEST_PASS=0
 fi
 echo ""
 
 # Test 2: Interactive mode - send /iter:run -v to running claude
-echo "[10/10] Testing: /iter:run -v in interactive Claude session..."
+# This also triggers the SessionStart hook which installs the /iter wrapper
+echo "[10/12] Testing: /iter:run -v in interactive Claude session..."
+echo "(This also triggers SessionStart hook to install /iter wrapper)"
 echo ""
 
 # Use expect-like approach with timeout and stdin
@@ -195,13 +209,60 @@ echo "--- end (exit code: $INT_EXIT) ---"
 echo ""
 
 # Check if /iter:run was recognized and executed
-if echo "$INTERACTIVE_OUTPUT" | grep -qiE "(iter version|ITERATIVE IMPLEMENTATION)"; then
+if echo "$INTERACTIVE_OUTPUT" | grep -qE "$EXPECTED_VERSION"; then
+    echo "OK: /iter:run -v executed in interactive mode (version matches)"
+    INT_TEST_PASS=1
+elif echo "$INTERACTIVE_OUTPUT" | grep -qiE "(iter version|ITERATIVE IMPLEMENTATION)"; then
     echo "OK: /iter:run -v executed in interactive mode"
     INT_TEST_PASS=1
 else
     echo "FAIL: /iter:run -v did NOT execute properly in interactive mode"
-    echo "Expected output to contain 'iter version' or 'ITERATIVE IMPLEMENTATION'"
+    echo "Expected output to contain version '$EXPECTED_VERSION' or 'iter version'"
     INT_TEST_PASS=0
+fi
+echo ""
+
+# Test 3: Check that /iter wrapper was installed by SessionStart hook
+echo "[11/12] Checking /iter wrapper installation..."
+ITER_WRAPPER="$HOME/.claude/skills/iter/SKILL.md"
+if [ -f "$ITER_WRAPPER" ]; then
+    echo "--- Wrapper skill installed at $ITER_WRAPPER ---"
+    cat "$ITER_WRAPPER"
+    echo "--- end ---"
+    echo "OK: /iter wrapper skill installed by SessionStart hook"
+    WRAPPER_INSTALLED=1
+else
+    echo "FAIL: /iter wrapper skill NOT installed"
+    echo "Expected file at: $ITER_WRAPPER"
+    WRAPPER_INSTALLED=0
+fi
+echo ""
+
+# Test 4: Test /iter -v (shortcut command) works
+echo "[12/12] Testing: /iter -v (shortcut command)..."
+echo ""
+
+ITER_SHORTCUT_OUTPUT=$(timeout 120 bash -c '
+echo "/iter -v" | claude --dangerously-skip-permissions 2>&1
+' 2>&1) || SHORTCUT_EXIT=$?
+SHORTCUT_EXIT=${SHORTCUT_EXIT:-0}
+
+echo "--- /iter -v output ---"
+echo "$ITER_SHORTCUT_OUTPUT"
+echo "--- end (exit code: $SHORTCUT_EXIT) ---"
+echo ""
+
+# Check if /iter -v executed and shows the correct version
+if echo "$ITER_SHORTCUT_OUTPUT" | grep -qE "$EXPECTED_VERSION"; then
+    echo "OK: /iter -v executed and version matches ($EXPECTED_VERSION)"
+    SHORTCUT_TEST_PASS=1
+elif echo "$ITER_SHORTCUT_OUTPUT" | grep -qiE "iter version"; then
+    echo "OK: /iter -v executed (version output detected)"
+    SHORTCUT_TEST_PASS=1
+else
+    echo "FAIL: /iter -v did NOT execute properly"
+    echo "Expected output to contain version '$EXPECTED_VERSION'"
+    SHORTCUT_TEST_PASS=0
 fi
 echo ""
 
@@ -211,9 +272,11 @@ echo "TEST RESULTS"
 echo "=========================================="
 echo "Command line test (claude -p '/iter:run -v'): $([ $CMD_TEST_PASS -eq 1 ] && echo 'PASS' || echo 'FAIL')"
 echo "Interactive test (/iter:run -v in session):  $([ $INT_TEST_PASS -eq 1 ] && echo 'PASS' || echo 'FAIL')"
+echo "Wrapper installation (SessionStart hook):   $([ $WRAPPER_INSTALLED -eq 1 ] && echo 'PASS' || echo 'FAIL')"
+echo "Shortcut test (/iter -v):                   $([ $SHORTCUT_TEST_PASS -eq 1 ] && echo 'PASS' || echo 'FAIL')"
 echo ""
 
-if [ $CMD_TEST_PASS -eq 1 ] && [ $INT_TEST_PASS -eq 1 ]; then
+if [ $CMD_TEST_PASS -eq 1 ] && [ $INT_TEST_PASS -eq 1 ] && [ $WRAPPER_INSTALLED -eq 1 ] && [ $SHORTCUT_TEST_PASS -eq 1 ]; then
     echo "=========================================="
     echo "ALL TESTS PASSED"
     echo "=========================================="
@@ -223,11 +286,11 @@ else
     echo "TESTS FAILED"
     echo "=========================================="
     echo ""
-    echo "The /iter:run command is not being recognized or executed by Claude."
     echo "Check that:"
     echo "  1. The plugin is properly installed"
     echo "  2. Skills are correctly defined in marketplace.json"
     echo "  3. SKILL.md files have the 'name' field"
+    echo "  4. SessionStart hook creates /iter wrapper skill"
     echo ""
     exit 1
 fi

@@ -1,6 +1,6 @@
 ---
 name: install
-description: Install /iter shortcut skill (creates wrapper in ~/.claude/skills/iter)
+description: Install /iter shortcut skill. Creates a wrapper in ~/.claude/skills/iter so you can use /iter instead of /iter:run. Supports Linux, macOS, WSL, and Windows.
 allowed-tools: ["Bash", "Write"]
 ---
 

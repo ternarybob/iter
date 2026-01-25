@@ -571,6 +571,8 @@ func main() {
 		err = cmdReset(args)
 	case "hook-stop":
 		err = cmdHookStop(args)
+	case "hook-session-start":
+		err = cmdHookSessionStart(args)
 	case "index":
 		err = cmdIndex(args)
 	case "search":
@@ -1506,6 +1508,51 @@ func ensureIndex(cfg index.Config) (*index.Indexer, error) {
 	}
 
 	return idx, nil
+}
+
+// cmdHookSessionStart handles the SessionStart hook to auto-install the /iter wrapper skill.
+func cmdHookSessionStart(args []string) error {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		// Can't get home dir - continue without installing
+		return outputJSON(HookResponse{Continue: true})
+	}
+
+	skillDir := filepath.Join(homeDir, ".claude", "skills", "iter")
+	skillFile := filepath.Join(skillDir, "SKILL.md")
+
+	// Check if wrapper skill already exists
+	if _, err := os.Stat(skillFile); err == nil {
+		// Already exists - nothing to do
+		return outputJSON(HookResponse{Continue: true})
+	}
+
+	// Create the wrapper skill
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		// Can't create directory - continue without installing
+		return outputJSON(HookResponse{Continue: true})
+	}
+
+	skillContent := `---
+name: iter
+description: Run iter default workflow (wrapper for iter plugin). Use -v to show version.
+---
+
+Execute the plugin skill ` + "`/iter:run`" + ` with the same arguments.
+
+Arguments:
+$ARGUMENTS
+`
+
+	if err := os.WriteFile(skillFile, []byte(skillContent), 0644); err != nil {
+		// Can't write file - continue without installing
+		return outputJSON(HookResponse{Continue: true})
+	}
+
+	return outputJSON(HookResponse{
+		Continue:      true,
+		SystemMessage: "Iter shortcut installed. The /iter command is now available.",
+	})
 }
 
 // cmdIndex handles the index subcommand.
