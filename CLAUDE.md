@@ -116,19 +116,20 @@ Use `/iter:test` to run Go tests with automated fix iteration:
 - Fixes implementation code only (max 10 iterations)
 - Documents all iterations and changes
 
-**Session state:** `.iter/workdir/test-{slug}-{timestamp}/`
+**Session state:** `.iter/workdir/{timestamp}-test-{slug}/`
 
 ## Binary Commands
 
 ```bash
 iter run "<task>"           # Start iterative implementation
 iter workflow "<spec>"      # Start workflow-based implementation
+iter test <file> [tests...] # Start test-driven iteration
 iter status                 # Show session status
 iter step [N]               # Show step instructions
 iter pass                   # Record validation pass
 iter reject "<reason>"      # Record validation rejection
 iter next                   # Move to next step
-iter complete               # Mark session complete
+iter complete               # Mark session complete (merges worktree)
 iter reset                  # Reset session
 iter hook-stop              # Stop hook handler (JSON)
 ```

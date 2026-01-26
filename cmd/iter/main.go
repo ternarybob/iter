@@ -8,6 +8,7 @@
 //
 //	iter run "<task>"                  - Start iterative implementation
 //	iter workflow "<spec>"             - Start workflow-based implementation
+//	iter test <file> [tests...]        - Start test-driven iteration
 //	iter status                        - Show current session status
 //	iter pass                          - Record validation pass
 //	iter reject "<reason>"             - Record validation rejection
@@ -175,6 +176,7 @@ func hasUncommittedChanges() bool {
 
 // createWorktree creates a git worktree for isolated work.
 // Returns the worktree path and branch name.
+// Format: iter/{timestamp}-{slug} (e.g., iter/20260127-083418-add-health-check)
 func createWorktree(taskSlug string) (worktreePath, branchName string, err error) {
 	// Get current branch
 	currentBranch, err := getCurrentBranch()
@@ -185,9 +187,9 @@ func createWorktree(taskSlug string) (worktreePath, branchName string, err error
 	// Get project root for .iter directory (not cwd)
 	projectRoot := findProjectRoot()
 
-	// Generate unique branch name
+	// Generate unique branch name with timestamp first
 	timestamp := time.Now().Format("20060102-150405")
-	branchName = fmt.Sprintf("iter/%s-%s", taskSlug, timestamp)
+	branchName = fmt.Sprintf("iter/%s-%s", timestamp, taskSlug)
 
 	// Worktree path in .iter/worktrees/ - use absolute path from project root
 	worktreePath = filepath.Join(projectRoot, stateDir, "worktrees", branchName)
@@ -577,6 +579,8 @@ func main() {
 		err = cmdIndex(args)
 	case "search":
 		err = cmdSearch(args)
+	case "test":
+		err = cmdTest(args)
 	case "version", "-v", "--version":
 		cmdVersion()
 	case "install":
@@ -598,7 +602,7 @@ func main() {
 // shouldAutoStartDaemon determines if the daemon should be auto-started for the given command.
 func shouldAutoStartDaemon(cmd string, args []string) bool {
 	switch cmd {
-	case "run", "workflow", "search", "status":
+	case "run", "workflow", "test", "search", "status":
 		return true
 	case "index":
 		// Don't auto-start for "index daemon stop" or "index daemon --foreground"
@@ -627,6 +631,9 @@ Commands:
     --no-worktree        Disable git worktree isolation
   workflow "<spec>"      Start workflow-based implementation
     --max-iterations N   Set maximum iterations (default 50)
+    --no-worktree        Disable git worktree isolation
+  test <file> [tests...] Start test-driven iteration (never modifies tests)
+    --max-iterations N   Set maximum iterations (default 10)
     --no-worktree        Disable git worktree isolation
   status                 Show current session status
   step [N]               Show current/specific step instructions
@@ -728,10 +735,11 @@ func summarizeTask(task string) string {
 
 // generateWorkdirPath creates a unique workdir path from a task.
 // If baseDir is provided, returns an absolute path under that directory.
+// Format: {timestamp}-{slug} (e.g., 20260127-0834-add-health-check)
 func generateWorkdirPath(task, baseDir string) string {
 	slug := summarizeTask(task)
-	timestamp := time.Now().Format("20060102-03-04")
-	relPath := filepath.Join(stateDir, "workdir", fmt.Sprintf("%s-%s", slug, timestamp))
+	timestamp := time.Now().Format("20060102-1504")
+	relPath := filepath.Join(stateDir, "workdir", fmt.Sprintf("%s-%s", timestamp, slug))
 	if baseDir != "" {
 		return filepath.Join(baseDir, relPath)
 	}
@@ -1030,6 +1038,185 @@ Use 'iter complete' when workflow is done.
 		prompts.ValidationRules,
 		spec,
 		prompts.WorkflowSystem,
+		state.Iteration, state.MaxIterations, state.Workdir)
+
+	return nil
+}
+
+// cmdTest starts a test-driven iteration session with worktree isolation.
+func cmdTest(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: iter test <test-file> [test-names...] [--max-iterations N] [--no-worktree]")
+	}
+
+	// Parse arguments: first arg is test file, remaining are test names
+	testFile := args[0]
+	var testNames []string
+	maxIterations := 10
+	useWorktree := true
+
+	for i := 1; i < len(args); i++ {
+		if args[i] == "--max-iterations" && i+1 < len(args) {
+			n, err := strconv.Atoi(args[i+1])
+			if err != nil {
+				return fmt.Errorf("invalid max-iterations: %w", err)
+			}
+			maxIterations = n
+			i++
+		} else if args[i] == "--no-worktree" {
+			useWorktree = false
+		} else if !strings.HasPrefix(args[i], "--") {
+			testNames = append(testNames, args[i])
+		}
+	}
+
+	// Build task description from test file and names
+	task := fmt.Sprintf("Test: %s", filepath.Base(testFile))
+	if len(testNames) > 0 {
+		task = fmt.Sprintf("Test: %s", strings.Join(testNames, ", "))
+	}
+
+	// Detect OS
+	osInfo := detectOS()
+
+	// Get current working directory and project root
+	originalWorkdir, _ := os.Getwd()
+	projectRoot := findProjectRoot()
+
+	// Generate unique workdir path with test prefix
+	slug := summarizeTask(task)
+	timestamp := time.Now().Format("20060102-1504")
+	workdir := filepath.Join(projectRoot, stateDir, "workdir", fmt.Sprintf("%s-test-%s", timestamp, slug))
+
+	// Initialize state
+	state := &State{
+		Task:            task,
+		Mode:            "test",
+		Workdir:         workdir,
+		MaxIterations:   maxIterations,
+		Iteration:       1,
+		Phase:           "worker",
+		CurrentStep:     1,
+		TotalSteps:      1,
+		StartedAt:       time.Now(),
+		LastActivityAt:  time.Now(),
+		Artifacts:       []string{},
+		Verdicts:        []Verdict{},
+		OriginalWorkdir: originalWorkdir,
+		OSInfo:          osInfo,
+	}
+
+	// Create git worktree if in a git repo
+	worktreeInfo := ""
+	if useWorktree && isGitRepo() {
+		if hasUncommittedChanges() {
+			fmt.Println("Warning: You have uncommitted changes. Consider committing or stashing them first.")
+			fmt.Println("Proceeding with worktree creation...")
+		}
+
+		currentBranch, err := getCurrentBranch()
+		if err != nil {
+			return fmt.Errorf("failed to get current branch: %w", err)
+		}
+		state.OriginalBranch = currentBranch
+
+		worktreePath, branchName, err := createWorktree(slug)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to create worktree: %v\n", err)
+			fmt.Fprintln(os.Stderr, "Continuing without worktree isolation...")
+		} else {
+			state.WorktreePath = worktreePath
+			state.WorktreeBranch = branchName
+
+			if err := os.Chdir(worktreePath); err != nil {
+				return fmt.Errorf("failed to change to worktree: %w", err)
+			}
+
+			worktreeInfo = fmt.Sprintf(`
+## Git Worktree (ISOLATED WORKSPACE)
+- **Original branch**: %s
+- **Working branch**: %s
+- **Worktree path**: %s
+
+All changes will be made in this isolated worktree.
+On completion, changes will be merged back to '%s' (no push to remote).
+`, currentBranch, branchName, worktreePath, currentBranch)
+		}
+	}
+
+	// Create workdir
+	if err := os.MkdirAll(workdir, 0755); err != nil {
+		return fmt.Errorf("failed to create workdir: %w", err)
+	}
+
+	if err := saveState(state); err != nil {
+		return fmt.Errorf("failed to save state: %w", err)
+	}
+
+	// Get OS guidance
+	osGuidance := getOSGuidance(osInfo)
+
+	// Build test command for output
+	testCmd := fmt.Sprintf("go test -v %s", testFile)
+	if len(testNames) > 0 {
+		testCmd = fmt.Sprintf("go test -v -run '%s' %s", strings.Join(testNames, "|"), testFile)
+	}
+
+	// Output the test session prompt
+	fmt.Printf(`# TEST-DRIVEN ITERATION
+
+## Test Target
+- **File**: %s
+- **Tests**: %s
+- **Command**: %s
+%s
+%s
+
+## CRITICAL RULES
+
+### Test File Preservation (MANDATORY)
+- **NEVER modify test files** - tests are the source of truth
+- Only fix implementation code to make tests pass
+- If a test appears misconfigured, ADVISE the user but do NOT change the test
+
+### Test Configuration Advisory
+If you detect these issues, advise the user:
+- Test expects wrong values (likely test needs update)
+- Test file path doesn't exist
+- Test assertions seem inverted
+- Test setup appears incomplete
+
+## Workflow
+1. Run the test command
+2. Analyze any failures
+3. Fix IMPLEMENTATION code only
+4. Re-run test
+5. Iterate until pass or max iterations (%d)
+
+## Session Info
+- Iteration: %d/%d
+- State: .iter/state.json
+- Artifacts: %s/
+
+## Completion
+When tests pass, run 'iter complete' to:
+- Merge changes to original branch
+- Clean up worktree
+- Note: Changes are NOT pushed to remote
+
+The session will continue until tests pass or max iterations reached.
+`,
+		testFile,
+		func() string {
+			if len(testNames) > 0 {
+				return strings.Join(testNames, ", ")
+			}
+			return "all"
+		}(),
+		testCmd,
+		worktreeInfo,
+		osGuidance,
+		state.MaxIterations,
 		state.Iteration, state.MaxIterations, state.Workdir)
 
 	return nil
