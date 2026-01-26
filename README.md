@@ -134,6 +134,7 @@ Run Go tests with automated fix iteration until tests pass.
 - Automated test fixing
 
 **Key features**:
+- Git worktree isolation - changes merged on success (no push)
 - NEVER modifies test files - tests are source of truth
 - Advises when test configuration appears incorrect
 - Root cause identification and targeted fix implementation
@@ -238,9 +239,26 @@ The Validator assumes ALL implementations are wrong until proven correct:
 **Auto-reject**: Build fails, tests fail, requirements not traced, dead code remains
 **Pass**: ALL checks verified, build passes, tests pass, cleanup complete
 
+## Git Worktree Isolation
+
+All code-modifying skills (`/iter:run`, `/iter:workflow`, `/iter:test`) use git worktree isolation:
+
+- **Isolated workspace**: Changes are made in a separate worktree branch
+- **Safe iteration**: Original branch is not affected during execution
+- **Automatic merge**: On completion, changes are merged back to the original branch
+- **No auto-push**: Changes are NOT pushed to remote (user must push manually)
+
+This ensures safe experimentation without affecting the main codebase until work is complete.
+
+**Worktree naming**: `iter/{timestamp}-{slug}` (e.g., `iter/20260127-0834-add-health-check`)
+
+**Workdir naming**: `{timestamp}-{slug}` (e.g., `20260127-0834-add-health-check`)
+
+Use `--no-worktree` flag to disable isolation if needed.
+
 ## Session Artifacts
 
-Created in `.iter/workdir/`:
+Created in `.iter/workdir/{timestamp}-{slug}/`:
 
 | File | Purpose |
 |------|---------|
@@ -288,7 +306,7 @@ Results saved to `tests/results/{timestamp}-{test-name}/`:
 - `iteration-N-changes.md` - Changes made
 - `test-results.md` - Final summary
 
-Session state in `.iter/workdir/test-{slug}-{timestamp}/`
+Session state in `.iter/workdir/{timestamp}-test-{slug}/`
 
 ### Example
 

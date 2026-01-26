@@ -6,6 +6,15 @@ The `test` skill provides automated test execution with intelligent fix iteratio
 
 **Critical**: This skill NEVER modifies test files. Tests are the source of truth for requirements. Only implementation code is fixed.
 
+## Git Worktree Isolation
+
+All changes are made in an isolated git worktree:
+- Original branch is not affected during iteration
+- On completion, changes are merged back to the original branch
+- Changes are NOT pushed to remote (user must push manually)
+
+This ensures safe iteration without affecting the main codebase until tests pass.
+
 ## Usage
 
 ```bash
@@ -41,9 +50,16 @@ The `test` skill provides automated test execution with intelligent fix iteratio
    - Documents all changes
 
 4. **Retry or Complete**
-   - If test passes: Document success and exit
+   - If test passes: Run `iter complete` to merge and exit
    - If iteration < 10: Retry test with fixes
    - If iteration = 10 and still failing: Document failure
+
+### Session Completion
+
+When tests pass (or max iterations reached), `iter complete` is called to:
+1. Merge the worktree branch to the original branch
+2. Clean up the worktree
+3. Note: Changes are NOT pushed to remote
 
 ## Test File Preservation
 
@@ -79,7 +95,7 @@ Continuing to iterate on implementation code...
 ## Output Structure
 
 ### Session Directory
-`.iter/workdir/test-{slug}-{timestamp}/`
+`.iter/workdir/{timestamp}-test-{slug}/`
 - `session-info.txt` - Test configuration
 - `iteration-N-analysis.md` - Failure analysis for iteration N
 - `iteration-N-changes.md` - Changes made in iteration N
@@ -94,12 +110,13 @@ Continuing to iterate on implementation code...
 ```
 /iter:test tests/docker/plugin_test.go TestPluginInstallation
 
-Session initialized: test-plugin-installation-20260126-172345
-Test file: tests/docker/plugin_test.go
-Test package: ./tests/docker
-Tests: TestPluginInstallation
-Results directory: tests/results/20260126-172345-plugin-installation/
-Max iterations: 10
+-> Session initialized in worktree
+   Branch: iter/20260127-172345-test-plugin
+   Test file: tests/docker/plugin_test.go
+   Test package: ./tests/docker
+   Tests: TestPluginInstallation
+   Results directory: tests/results/20260127-172345-plugin-installation/
+   Max iterations: 10
 
 === Iteration 1/10 ===
 Running tests...
@@ -131,20 +148,26 @@ Implementing fixes...
 Running tests...
 Tests PASSED
 
+-> iter complete
+   Merging branch iter/20260127-172345-test-plugin to main...
+   Worktree cleaned up.
+
 ========================================
 TESTS PASSED after 3 iteration(s)
+Changes merged to main (not pushed)
 ========================================
 
-Results: tests/results/20260126-172345-plugin-installation/
-Summary: tests/results/20260126-172345-plugin-installation/test-results.md
+Results: tests/results/20260127-172345-plugin-installation/
+Summary: tests/results/20260127-172345-plugin-installation/test-results.md
 ```
 
 ## Key Features
 
-### Task Management
-- Creates tasks for each iteration using `TaskCreate`
-- Updates task status with `TaskUpdate`
-- Tracks progress through task list
+### Worktree Isolation
+- All changes made in isolated git worktree
+- Safe iteration without affecting main branch
+- Automatic merge on success
+- No automatic push to remote
 
 ### Comprehensive Documentation
 - Every iteration fully documented
@@ -173,8 +196,8 @@ For Docker or UI tests:
 4. **Save Everything** - All outputs, logs, changes to results directory
 5. **Fix Root Cause** - Don't patch symptoms
 6. **Verify Builds** - Run `go build ./...` after changes
-7. **Use Tasks** - Track progress with TaskCreate/TaskUpdate
-8. **Advise on Test Issues** - Output advisory when test appears misconfigured
+7. **Advise on Test Issues** - Output advisory when test appears misconfigured
+8. **Use iter complete** - Always call `iter complete` when done
 
 ## Requirements
 
@@ -193,9 +216,10 @@ For Docker or UI tests:
 
 The skill integrates with the iter workflow system:
 - Uses `.iter/workdir/` for session state
-- Creates task list for iteration tracking
+- Uses git worktree for isolation
 - Documents in markdown format
 - Follows structured analysis -> fix -> verify pattern
+- Merges on completion (no push)
 
 ## Examples
 
@@ -204,7 +228,7 @@ The skill integrates with the iter workflow system:
 /iter:test tests/docker/plugin_test.go TestPluginInstallation
 ```
 
-Runs the Docker integration test, fixes any issues with Docker setup, plugin installation, or API configuration.
+Runs the Docker integration test in an isolated worktree, fixes any issues with Docker setup, plugin installation, or API configuration, then merges on success.
 
 ### Example 2: Multiple Unit Tests
 ```bash
