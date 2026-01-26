@@ -6,10 +6,29 @@ import (
 	"testing"
 )
 
-// runIterDirectoryCreationTest tests that executing /iter:run creates the
+// TestIterDirectoryCreation tests that executing /iter:run creates the
 // required .iter directory structure (index, worktrees, workdir).
-func runIterDirectoryCreationTest(t *testing.T, projectRoot, apiKey string) {
-	t.Helper()
+func TestIterDirectoryCreation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping Docker integration test in short mode")
+	}
+
+	// Check Docker availability
+	dockerCheck := exec.Command("docker", "info")
+	if err := dockerCheck.Run(); err != nil {
+		t.Skip("Docker not available, skipping integration test")
+	}
+
+	// Get project root and API key
+	projectRoot := findProjectRoot(t)
+	apiKey := loadAPIKey(t, projectRoot)
+
+	if apiKey == "" {
+		t.Skip("ANTHROPIC_API_KEY required")
+	}
+
+	// Build Docker image (reuses if exists)
+	buildDockerImage(t, projectRoot)
 
 	testScript := `
 		set -e
@@ -113,10 +132,29 @@ func runIterDirectoryCreationTest(t *testing.T, projectRoot, apiKey string) {
 	}
 }
 
-// runIterDirectoryRecreationTest tests that deleting .iter directory and
+// TestIterDirectoryRecreation tests that deleting .iter directory and
 // re-running /iter:run properly recreates the directory structure.
-func runIterDirectoryRecreationTest(t *testing.T, projectRoot, apiKey string) {
-	t.Helper()
+func TestIterDirectoryRecreation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping Docker integration test in short mode")
+	}
+
+	// Check Docker availability
+	dockerCheck := exec.Command("docker", "info")
+	if err := dockerCheck.Run(); err != nil {
+		t.Skip("Docker not available, skipping integration test")
+	}
+
+	// Get project root and API key
+	projectRoot := findProjectRoot(t)
+	apiKey := loadAPIKey(t, projectRoot)
+
+	if apiKey == "" {
+		t.Skip("ANTHROPIC_API_KEY required")
+	}
+
+	// Build Docker image (reuses if exists)
+	buildDockerImage(t, projectRoot)
 
 	testScript := `
 		set -e

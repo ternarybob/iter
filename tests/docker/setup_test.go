@@ -1,36 +1,37 @@
 // Package docker provides Docker-based integration tests for the iter plugin.
 //
-// Test Execution Order:
-// These tests use t.Run() subtests to guarantee sequential execution.
-// The TestDockerIntegration parent test builds the Docker image once,
-// then runs all subtests in order:
+// Tests:
+//   - TestPluginInstallation - Full installation and /iter:run test
+//   - TestIterRunCommandLine - Tests `claude -p '/iter:run -v'`
+//   - TestIterRunInteractive - Tests `/iter:run -v` in interactive session
+//   - TestPluginSkillAutoprompt - Tests skill discoverability
+//   - TestIterDirectoryCreation - Tests .iter directory creation
+//   - TestIterDirectoryRecreation - Tests .iter directory recreation
 //
-//  1. PluginInstallation - Full installation and /iter:run test
-//  2. IterRunCommandLine - Tests `claude -p '/iter:run -v'`
-//  3. IterRunInteractive - Tests `/iter:run -v` in interactive session
-//  4. PluginSkillAutoprompt - Tests skill discoverability
-//  5. IterDirectoryCreation - Tests .iter directory creation
-//  6. IterDirectoryRecreation - Tests .iter directory recreation
+// Each test is independent and sets up its own Docker environment.
 //
-// Run tests:
+// Run all tests:
 //
 //	go test ./tests/docker/... -v
+//
+// Run specific test:
+//
+//	go test ./tests/docker/... -run TestPluginInstallation -v
 //
 // With API key for full Claude integration:
 //
 //	ANTHROPIC_API_KEY=sk-... go test ./tests/docker/... -v -timeout 15m
 //
-// Note: Tests run sequentially (not in parallel) to avoid Docker resource contention.
+// Note: Tests can run in parallel or individually. Each test creates its own
+// timestamped results directory in tests/results/.
 package docker
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 const dockerImage = "iter-plugin-test"
@@ -74,83 +75,6 @@ func buildDockerImage(t *testing.T, projectRoot string) {
 		t.Fatalf("Failed to build Docker image: %v\nOutput: %s", err, buildOutput)
 	}
 	t.Log("Docker image built successfully")
-}
-
-// TestDockerIntegration is the parent test that runs all Docker integration tests
-// in a guaranteed sequential order. It builds the Docker image once and shares it
-// across all subtests.
-func TestDockerIntegration(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping Docker integration test in short mode")
-	}
-
-	// Check if Docker is available
-	dockerCheck := exec.Command("docker", "info")
-	if err := dockerCheck.Run(); err != nil {
-		t.Skip("Docker not available, skipping integration test")
-	}
-
-	// Clean up Docker before all tests
-	pruneDocker(t)
-
-	projectRoot := findProjectRoot(t)
-	apiKey := loadAPIKey(t, projectRoot)
-
-	if apiKey == "" {
-		t.Log("WARNING: No API key found - tests requiring Claude will fail")
-		t.Log("Set ANTHROPIC_API_KEY in environment or tests/docker/.env")
-	}
-
-	// Build Docker image once for all subtests
-	buildDockerImage(t, projectRoot)
-
-	// Create results directory for this test run
-	timestamp := time.Now().Format("20060102-150405")
-	resultsDir := filepath.Join(projectRoot, "tests", "results", timestamp+"-docker")
-	if err := os.MkdirAll(resultsDir, 0755); err != nil {
-		t.Fatalf("Failed to create results directory: %v", err)
-	}
-	t.Logf("Results will be saved to: %s", resultsDir)
-
-	// Run subtests in order - Go guarantees sequential execution within t.Run
-	t.Run("1_PluginInstallation", func(t *testing.T) {
-		runPluginInstallationTest(t, projectRoot, apiKey, resultsDir)
-	})
-
-	t.Run("2_IterRunCommandLine", func(t *testing.T) {
-		if apiKey == "" {
-			t.Skip("ANTHROPIC_API_KEY required")
-		}
-		runIterRunCommandLineTest(t, projectRoot, apiKey)
-	})
-
-	t.Run("3_IterRunInteractive", func(t *testing.T) {
-		if apiKey == "" {
-			t.Skip("ANTHROPIC_API_KEY required")
-		}
-		runIterRunInteractiveTest(t, projectRoot, apiKey)
-	})
-
-	t.Run("4_PluginSkillAutoprompt", func(t *testing.T) {
-		if apiKey == "" {
-			t.Skip("ANTHROPIC_API_KEY required")
-		}
-		runPluginSkillAutopromptTest(t, projectRoot, apiKey)
-	})
-
-	t.Run("5_IterDirectoryCreation", func(t *testing.T) {
-		if apiKey == "" {
-			t.Skip("ANTHROPIC_API_KEY required")
-		}
-		runIterDirectoryCreationTest(t, projectRoot, apiKey)
-	})
-
-	t.Run("6_IterDirectoryRecreation", func(t *testing.T) {
-		if apiKey == "" {
-			t.Skip("ANTHROPIC_API_KEY required")
-		}
-		runIterDirectoryRecreationTest(t, projectRoot, apiKey)
-	})
 }
 
 // findProjectRoot walks up directory tree looking for go.mod

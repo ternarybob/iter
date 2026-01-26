@@ -10,10 +10,36 @@ import (
 	"time"
 )
 
-// runPluginInstallationTest tests that the iter plugin installs correctly
+// TestPluginInstallation tests that the iter plugin installs correctly
 // in a fresh Docker container with Claude Code.
-func runPluginInstallationTest(t *testing.T, projectRoot, apiKey, resultsDir string) {
-	t.Helper()
+func TestPluginInstallation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping Docker integration test in short mode")
+	}
+
+	// Check Docker availability
+	dockerCheck := exec.Command("docker", "info")
+	if err := dockerCheck.Run(); err != nil {
+		t.Skip("Docker not available, skipping integration test")
+	}
+
+	// Get project root and API key
+	projectRoot := findProjectRoot(t)
+	apiKey := loadAPIKey(t, projectRoot)
+
+	if apiKey == "" {
+		t.Skip("ANTHROPIC_API_KEY required")
+	}
+
+	// Build Docker image (reuses if exists)
+	buildDockerImage(t, projectRoot)
+
+	// Create results directory
+	timestamp := time.Now().Format("20060102-150405")
+	resultsDir := filepath.Join(projectRoot, "tests", "results", timestamp+"-plugin-installation")
+	if err := os.MkdirAll(resultsDir, 0755); err != nil {
+		t.Fatalf("Failed to create results directory: %v", err)
+	}
 
 	// Open log file
 	logPath := filepath.Join(resultsDir, "test-output.log")

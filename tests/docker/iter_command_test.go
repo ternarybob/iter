@@ -6,9 +6,28 @@ import (
 	"testing"
 )
 
-// runIterRunCommandLineTest tests `claude -p '/iter:run -v'` command line invocation
-func runIterRunCommandLineTest(t *testing.T, projectRoot, apiKey string) {
-	t.Helper()
+// TestIterRunCommandLine tests `claude -p '/iter:run -v'` command line invocation
+func TestIterRunCommandLine(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping Docker integration test in short mode")
+	}
+
+	// Check Docker availability
+	dockerCheck := exec.Command("docker", "info")
+	if err := dockerCheck.Run(); err != nil {
+		t.Skip("Docker not available, skipping integration test")
+	}
+
+	// Get project root and API key
+	projectRoot := findProjectRoot(t)
+	apiKey := loadAPIKey(t, projectRoot)
+
+	if apiKey == "" {
+		t.Skip("ANTHROPIC_API_KEY required")
+	}
+
+	// Build Docker image (reuses if exists)
+	buildDockerImage(t, projectRoot)
 
 	// Run just the command line test
 	runCmd := exec.Command("docker", "run", "--rm",
@@ -38,9 +57,28 @@ func runIterRunCommandLineTest(t *testing.T, projectRoot, apiKey string) {
 	}
 }
 
-// runIterRunInteractiveTest tests `/iter:run -v` in interactive Claude session
-func runIterRunInteractiveTest(t *testing.T, projectRoot, apiKey string) {
-	t.Helper()
+// TestIterRunInteractive tests `/iter:run -v` in interactive Claude session
+func TestIterRunInteractive(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping Docker integration test in short mode")
+	}
+
+	// Check Docker availability
+	dockerCheck := exec.Command("docker", "info")
+	if err := dockerCheck.Run(); err != nil {
+		t.Skip("Docker not available, skipping integration test")
+	}
+
+	// Get project root and API key
+	projectRoot := findProjectRoot(t)
+	apiKey := loadAPIKey(t, projectRoot)
+
+	if apiKey == "" {
+		t.Skip("ANTHROPIC_API_KEY required")
+	}
+
+	// Build Docker image (reuses if exists)
+	buildDockerImage(t, projectRoot)
 
 	// Run interactive test
 	runCmd := exec.Command("docker", "run", "--rm",
@@ -70,10 +108,29 @@ func runIterRunInteractiveTest(t *testing.T, projectRoot, apiKey string) {
 	}
 }
 
-// runPluginSkillAutopromptTest tests that plugin skills are discoverable and appear
+// TestPluginSkillAutoprompt tests that plugin skills are discoverable and appear
 // in Claude's skill system.
-func runPluginSkillAutopromptTest(t *testing.T, projectRoot, apiKey string) {
-	t.Helper()
+func TestPluginSkillAutoprompt(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping Docker integration test in short mode")
+	}
+
+	// Check Docker availability
+	dockerCheck := exec.Command("docker", "info")
+	if err := dockerCheck.Run(); err != nil {
+		t.Skip("Docker not available, skipping integration test")
+	}
+
+	// Get project root and API key
+	projectRoot := findProjectRoot(t)
+	apiKey := loadAPIKey(t, projectRoot)
+
+	if apiKey == "" {
+		t.Skip("ANTHROPIC_API_KEY required")
+	}
+
+	// Build Docker image (reuses if exists)
+	buildDockerImage(t, projectRoot)
 
 	// Test script that checks:
 	// 1. All expected skills are cached with valid SKILL.md

@@ -25,18 +25,23 @@ Unit tests verify binary functionality without Docker or API access.
 ```bash
 # Requires ANTHROPIC_API_KEY in environment or tests/docker/.env
 ANTHROPIC_API_KEY=sk-... go test ./tests/docker/... -v -timeout 15m
+
+# Run specific test
+go test ./tests/docker/... -run TestPluginInstallation -v
 ```
 
-Docker tests run **sequentially** in guaranteed order:
+Docker tests are **independent** and can run in any order or individually:
 
-1. **PluginInstallation** - Full plugin installation and /iter:run test
-2. **IterRunCommandLine** - Tests `claude -p '/iter:run -v'`
-3. **IterRunInteractive** - Tests `/iter:run -v` in interactive session
-4. **PluginSkillAutoprompt** - Tests skill discoverability
+- **TestPluginInstallation** - Full plugin installation and /iter:run test
+- **TestIterRunCommandLine** - Tests `claude -p '/iter:run -v'`
+- **TestIterRunInteractive** - Tests `/iter:run -v` in interactive session
+- **TestPluginSkillAutoprompt** - Tests skill discoverability
+- **TestIterDirectoryCreation** - Tests .iter directory creation
+- **TestIterDirectoryRecreation** - Tests .iter directory recreation
 
-The Docker image is built **once** before all subtests to optimize execution time.
+Each test sets up its own Docker environment and builds the image if needed (reuses if exists).
 
-**Results** are saved to `tests/results/{timestamp}-docker/`:
+**Results** for TestPluginInstallation are saved to `tests/results/{timestamp}-plugin-installation/`:
 - `test-output.log` - Full test output
 - `result.txt` - Pass/fail status with any missing checks
 
@@ -79,6 +84,39 @@ When Iter is running:
 - **CLEANUP IS MANDATORY** - remove dead/redundant code
 - **BUILD MUST PASS** - verify after each change
 - **Validator DEFAULT: REJECT** - find problems, don't confirm success
+
+## Skills
+
+```bash
+/iter "<task>"                          # Start iterative implementation
+/iter-workflow "<spec>"                 # Start workflow-based implementation
+/iter-test <test-file> [tests...]      # Run tests with auto-fix (max 3 iterations)
+/iter-index                            # Manage code index
+/iter-search "<query>"                 # Search indexed code
+```
+
+### Test-Driven Iteration
+
+Use `/iter-test` to run Go tests with automated fix iteration:
+
+```bash
+# Run specific test
+/iter-test tests/docker/plugin_test.go TestPluginInstallation
+
+# Run multiple tests
+/iter-test tests/docker/iter_command_test.go TestIterRunCommandLine TestIterRunInteractive
+
+# Run all tests in file
+/iter-test tests/docker/plugin_test.go
+```
+
+**Workflow:**
+1. Run test and capture output
+2. If fail: Analyze error → Fix issue → Retry (max 3x)
+3. Document all iterations
+4. Save results to `tests/results/{timestamp}-{test-name}/`
+
+**Session state:** `.iter/workdir/test-{slug}-{timestamp}/`
 
 ## Binary Commands
 

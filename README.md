@@ -66,8 +66,148 @@ claude plugin marketplace remove iter-local
 |---------|-------------|
 | `/iter "<task>"` | Start iterative implementation |
 | `/iter-workflow "<spec>"` | Start workflow-based implementation |
+| `/iter-test <test-file> [tests...]` | Run tests with auto-fix iteration (max 3x) |
 | `/iter-index` | Manage the code index (status, build, clear, watch) |
 | `/iter-search "<query>"` | Search indexed code (semantic/keyword search) |
+| `/iter:install` | Install `/iter` shortcut wrapper |
+
+## Skills
+
+Iter provides six specialized skills for different aspects of iterative development:
+
+### /iter:run - Core Iterative Implementation
+
+The main skill for implementing features, fixing bugs, and refactoring code with high quality standards.
+
+**Purpose**: Execute a structured three-phase workflow (ARCHITECT → WORKER → VALIDATOR) that iterates until all requirements and tests pass.
+
+**When to use**:
+- Implementing new features
+- Fixing bugs
+- Refactoring code
+- Any code changes requiring high quality
+
+**Key features**:
+- Adversarial validation (default: REJECT)
+- Task management for ordered execution
+- Git worktree isolation
+- Requirements traceability
+- Automatic cleanup enforcement
+
+**Example**: `/iter:run "add health check endpoint at /health"`
+
+[→ Full documentation](skills/run/README.md)
+
+### /iter:iter-workflow - Custom Workflow Execution
+
+Execute custom workflow specifications for specialized iterative processes.
+
+**Purpose**: Run domain-specific workflows with custom phases, priorities, and success criteria beyond the standard implementation pattern.
+
+**When to use**:
+- Service stabilization and debugging
+- Performance optimization
+- Multi-iteration system tuning
+- Custom iteration logic with specific priority rules
+
+**Key features**:
+- Custom workflow specifications (from file or inline)
+- Priority-based issue selection
+- Multi-phase iteration (ARCHITECT/WORKER/VALIDATOR/COMPLETE)
+- Configurable iteration limits and stabilization periods
+- Comprehensive documentation per iteration
+
+**Example**: `/iter:iter-workflow docs/stabilize-services.md`
+
+[→ Full documentation](skills/iter-workflow/README.md)
+
+### /iter:iter-test - Test-Driven Iteration
+
+Run Go tests with automated fix iteration until tests pass.
+
+**Purpose**: Execute tests, analyze failures, implement fixes, and retry up to 3 times with intelligent problem-solving.
+
+**When to use**:
+- Running flaky or failing tests
+- Debugging test failures
+- Test-driven development
+- Automated test fixing
+
+**Key features**:
+- Automatic failure analysis
+- Root cause identification
+- Targeted fix implementation
+- Max 3 iterations per test run
+- Complete documentation of attempts
+
+**Example**: `/iter:iter-test tests/docker/plugin_test.go TestPluginInstallation`
+
+[→ Full documentation](skills/iter-test/README.md)
+
+### /iter:iter-index - Code Index Management
+
+Manage the code index used for semantic and keyword search.
+
+**Purpose**: Build, monitor, and maintain a searchable index of your codebase for fast code navigation.
+
+**When to use**:
+- Before using `/iter:iter-search`
+- After significant code changes
+- To check index freshness
+- Setting up search functionality
+
+**Commands**:
+- `status` - Show index state and statistics
+- `build` - Create or rebuild the index
+- `clear` - Remove index data
+- `watch` - Auto-update index on file changes
+
+**Example**: `/iter:iter-index build`
+
+[→ Full documentation](skills/iter-index/README.md)
+
+### /iter:iter-search - Code Search
+
+Search your indexed codebase using semantic or keyword search.
+
+**Purpose**: Find relevant code locations with context using natural language queries or specific identifiers.
+
+**When to use**:
+- Exploring unfamiliar code
+- Finding all instances of a concept
+- Understanding system architecture
+- Locating functions/classes/patterns
+
+**Key features**:
+- Semantic search (understands meaning)
+- Keyword search (exact/fuzzy matching)
+- Ranked results with context
+- File paths and line numbers
+- Requires index built via `/iter:iter-index`
+
+**Example**: `/iter:iter-search "user authentication logic"`
+
+[→ Full documentation](skills/iter-search/README.md)
+
+### /iter:install - Shortcut Installation
+
+Create a wrapper that allows using `/iter` instead of `/iter:run`.
+
+**Purpose**: One-time setup to install a convenient shortcut for the main iterative implementation skill.
+
+**When to use**:
+- After installing the iter plugin
+- When you want shorter command syntax
+- First-time setup
+
+**What it does**:
+- Creates wrapper skill in `~/.claude/skills/iter/`
+- Delegates to `/iter:run` automatically
+- Works on Linux, macOS, WSL, and Windows
+
+**Post-installation**: Use `/iter "task"` instead of `/iter:run "task"`
+
+[→ Full documentation](skills/install/README.md)
 
 ## How It Works
 
@@ -108,6 +248,62 @@ Created in `.iter/workdir/`:
 | `step_N.md` | Step specifications |
 | `step_N_impl.md` | Implementation notes |
 | `summary.md` | Completion summary |
+
+## Test-Driven Iteration
+
+The `/iter-test` command runs tests with automated fix iteration (max 3 attempts):
+
+```bash
+# Run specific test with auto-fix
+/iter-test tests/docker/plugin_test.go TestPluginInstallation
+
+# Run multiple tests
+/iter-test tests/docker/iter_command_test.go TestIterRunCommandLine TestIterRunInteractive
+
+# Run all tests in file
+/iter-test tests/docker/plugin_test.go
+```
+
+### How It Works
+
+1. **Runs the test** and captures full output
+2. **If test fails**:
+   - Analyzes error messages and stack traces
+   - Reads test source to understand requirements
+   - Identifies root cause
+   - Implements targeted fixes
+   - Retries test (max 3 iterations)
+3. **Documents everything**:
+   - Each iteration's analysis and changes
+   - Test outputs and results
+   - Final summary with all fixes
+
+### Output
+
+Results saved to `tests/results/{timestamp}-{test-name}/`:
+- `iteration-N-output.log` - Test output for each run
+- `iteration-N-analysis.md` - Failure analysis and fix plan
+- `iteration-N-changes.md` - Changes made
+- `test-results.md` - Final summary
+
+Session state in `.iter/workdir/test-{slug}-{timestamp}/`
+
+### Example
+
+```
+/iter-test tests/docker/plugin_test.go TestPluginInstallation
+
+→ Iteration 1: FAIL
+  Error: Docker image build failed
+  Fix: Add missing dependency
+
+→ Iteration 2: FAIL
+  Error: API key not found
+  Fix: Update loadAPIKey helper
+
+→ Iteration 3: PASS
+  ✓ All tests passed
+```
 
 ## Testing
 
