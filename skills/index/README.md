@@ -1,10 +1,10 @@
-# iter-index Skill
+# index Skill
 
 ## Overview
 
-The `iter-index` skill manages the code index used for semantic and keyword search. It provides commands to build, monitor, and maintain a searchable index of your codebase.
+The `index` skill manages the code index used for semantic and keyword search. It provides commands to build, monitor, and maintain a searchable index of your codebase.
 
-The index enables fast code navigation and discovery through the `/iter:iter-search` skill.
+The index enables fast code navigation and discovery through the `/iter:search` skill.
 
 ## Commands
 
@@ -19,16 +19,16 @@ The index enables fast code navigation and discovery through the `/iter:iter-sea
 
 ```bash
 # Check index status
-/iter:iter-index status
+/iter:index status
 
 # Build or rebuild index
-/iter:iter-index build
+/iter:index build
 
 # Clear index data
-/iter:iter-index clear
+/iter:index clear
 
 # Start watch mode (auto-update)
-/iter:iter-index watch
+/iter:index watch
 ```
 
 ## How It Works
@@ -38,7 +38,7 @@ The skill executes the `iter index` binary command, which:
 1. **Scans the codebase** - Walks through all source files
 2. **Parses code structure** - Understands functions, classes, imports
 3. **Creates searchable index** - Stores in `.iter/index/` directory
-4. **Enables fast queries** - Powers `/iter:iter-search` skill
+4. **Enables fast queries** - Powers `/iter:search` skill
 
 The index is stored locally in your project's `.iter/index/` directory.
 
@@ -46,7 +46,7 @@ The index is stored locally in your project's `.iter/index/` directory.
 
 ### Build the Index
 
-Run `/iter:iter-index build` when:
+Run `/iter:index build` when:
 - First time setting up search functionality
 - After significant code changes
 - When search results seem outdated
@@ -54,7 +54,7 @@ Run `/iter:iter-index build` when:
 
 ### Check Status
 
-Run `/iter:iter-index status` to:
+Run `/iter:index status` to:
 - Verify index exists
 - See how many files are indexed
 - Check index size and timestamp
@@ -62,14 +62,14 @@ Run `/iter:iter-index status` to:
 
 ### Clear the Index
 
-Run `/iter:iter-index clear` to:
+Run `/iter:index clear` to:
 - Remove stale index data
 - Free up disk space
 - Start fresh before rebuilding
 
 ### Watch Mode
 
-Run `/iter:iter-index watch` to:
+Run `/iter:index watch` to:
 - Automatically update index when files change
 - Keep index fresh during active development
 - Avoid manual rebuilds
@@ -79,7 +79,7 @@ Run `/iter:iter-index watch` to:
 ### Example 1: First-Time Setup
 
 ```bash
-User: /iter:iter-index build
+User: /iter:index build
 
 Claude: Building code index...
 
@@ -92,13 +92,13 @@ Claude: Building code index...
 
         Location: .iter/index/
 
-        You can now use /iter:iter-search to query the codebase!
+        You can now use /iter:search to query the codebase!
 ```
 
 ### Example 2: Check Index Status
 
 ```bash
-User: /iter:iter-index status
+User: /iter:index status
 
 Claude: Code Index Status
 
@@ -115,13 +115,13 @@ Claude: Code Index Status
 ### Example 3: Clear and Rebuild
 
 ```bash
-User: /iter:iter-index clear
+User: /iter:index clear
 
 Claude: ✅ Index cleared successfully
 
         Removed: .iter/index/
 
-User: /iter:iter-index build
+User: /iter:index build
 
 Claude: Building code index...
         ✅ Index built successfully
@@ -158,45 +158,45 @@ You don't need to interact with these files directly - the skills handle all ind
 
 ## Related Skills
 
-- **/iter:iter-search** - Search the indexed code (requires index to be built)
+- **/iter:search** - Search the indexed code (requires index to be built)
 - **Grep** - For exact literal pattern matching (doesn't require index)
 
 ## Typical Workflow
 
 1. **Build index once**:
    ```bash
-   /iter:iter-index build
+   /iter:index build
    ```
 
 2. **Search as needed**:
    ```bash
-   /iter:iter-search "authentication logic"
-   /iter:iter-search "error handling patterns"
+   /iter:search "authentication logic"
+   /iter:search "error handling patterns"
    ```
 
 3. **Rebuild periodically**:
    ```bash
    # After major changes
-   /iter:iter-index build
+   /iter:index build
    ```
 
 4. **Or use watch mode**:
    ```bash
    # During active development
-   /iter:iter-index watch
+   /iter:index watch
    ```
 
 ## Troubleshooting
 
 ### "Index not found"
-Run `/iter:iter-index build` to create the index.
+Run `/iter:index build` to create the index.
 
 ### "Index seems outdated"
-Run `/iter:iter-index build` to rebuild with latest code.
+Run `/iter:index build` to rebuild with latest code.
 
 ### Search returns no results
-1. Check index exists: `/iter:iter-index status`
-2. Rebuild if needed: `/iter:iter-index build`
+1. Check index exists: `/iter:index status`
+2. Rebuild if needed: `/iter:index build`
 3. Try different search terms
 
 ### Index taking too long to build

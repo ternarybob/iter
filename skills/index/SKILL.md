@@ -1,6 +1,6 @@
 ---
-name: iter-index
-description: Manage the code index for semantic search. Commands: status, build, clear, watch. Use before iter-search for code navigation.
+name: index
+description: Manage the code index for semantic search. Commands: status, build, clear, watch. Use before /iter:search for code navigation.
 allowed-tools: ["Bash", "Read"]
 ---
 
@@ -17,4 +17,4 @@ Report the index operation result from the output above:
 - **clear**: Confirm index was cleared
 - **watch**: Report watch mode status
 
-Suggest next steps if appropriate (e.g., "run `/iter:iter-search <query>` to search the index").
+Suggest next steps if appropriate (e.g., "run `/iter:search <query>` to search the index").

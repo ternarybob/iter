@@ -1,31 +1,31 @@
-# iter-search Skill
+# search Skill
 
 ## Overview
 
-The `iter-search` skill searches your indexed codebase using semantic or keyword search. It returns relevant code locations with context, helping you quickly navigate and understand your code.
+The `search` skill searches your indexed codebase using semantic or keyword search. It returns relevant code locations with context, helping you quickly navigate and understand your code.
 
-**Prerequisites**: The code index must be built first using `/iter:iter-index build`.
+**Prerequisites**: The code index must be built first using `/iter:index build`.
 
 ## Usage
 
 ```bash
-/iter:iter-search "<query>"
+/iter:search "<query>"
 ```
 
 ### Examples
 
 ```bash
 # Find authentication code
-/iter:iter-search "user authentication"
+/iter:search "user authentication"
 
 # Find error handling
-/iter:iter-search "error handling patterns"
+/iter:search "error handling patterns"
 
 # Find specific functionality
-/iter:iter-search "database connection setup"
+/iter:search "database connection setup"
 
 # Find API endpoints
-/iter:iter-search "REST API endpoints"
+/iter:search "REST API endpoints"
 ```
 
 ## Prerequisites
@@ -34,13 +34,13 @@ Before using iter-search, you must build the code index:
 
 ```bash
 # First time: build the index
-/iter:iter-index build
+/iter:index build
 
 # Check index status
-/iter:iter-index status
+/iter:index status
 
 # Then search
-/iter:iter-search "<your query>"
+/iter:search "<your query>"
 ```
 
 If the index doesn't exist or is outdated, search results may be empty or incomplete.
@@ -123,16 +123,16 @@ Found 3 matches for "user authentication":
 
 **Good queries** (descriptive, natural language):
 ```bash
-/iter:iter-search "how users authenticate"
-/iter:iter-search "error handling for API requests"
-/iter:iter-search "database connection pooling"
+/iter:search "how users authenticate"
+/iter:search "error handling for API requests"
+/iter:search "database connection pooling"
 ```
 
 **Also good** (specific identifiers):
 ```bash
-/iter:iter-search "authenticateUser function"
-/iter:iter-search "DatabasePool class"
-/iter:iter-search "API middleware"
+/iter:search "authenticateUser function"
+/iter:search "DatabasePool class"
+/iter:search "API middleware"
 ```
 
 ### Try Different Phrasings
@@ -141,9 +141,9 @@ If you don't get good results, try rephrasing:
 
 ```bash
 # Try these variations:
-/iter:iter-search "user login"
-/iter:iter-search "authentication flow"
-/iter:iter-search "login handler"
+/iter:search "user login"
+/iter:search "authentication flow"
+/iter:search "login handler"
 ```
 
 ### Rebuild Index if Code Changed
@@ -152,10 +152,10 @@ If you've made significant code changes:
 
 ```bash
 # Rebuild index for fresh results
-/iter:iter-index build
+/iter:index build
 
 # Then search again
-/iter:iter-search "<query>"
+/iter:search "<query>"
 ```
 
 ### Use Grep for Exact Patterns
@@ -164,7 +164,7 @@ For literal pattern matching, use Grep instead:
 
 ```bash
 # iter-search: semantic/fuzzy
-/iter:iter-search "authentication"
+/iter:search "authentication"
 
 # Grep: exact literal match
 # Use Grep tool with pattern: "func authenticate"
@@ -190,7 +190,7 @@ For literal pattern matching, use Grep instead:
 ### Example 1: Find Authentication Code
 
 ```bash
-User: /iter:iter-search "user authentication"
+User: /iter:search "user authentication"
 
 Claude: Found 5 matches:
 
@@ -206,7 +206,7 @@ Claude: Found 5 matches:
 ### Example 2: Find Error Handling
 
 ```bash
-User: /iter:iter-search "error handling patterns"
+User: /iter:search "error handling patterns"
 
 Claude: Found 8 matches:
 
@@ -224,7 +224,7 @@ Claude: Found 8 matches:
 ### Example 3: Understand Database Layer
 
 ```bash
-User: /iter:iter-search "database connection and queries"
+User: /iter:search "database connection and queries"
 
 Claude: Found 6 matches:
 
@@ -243,7 +243,7 @@ Claude: Found 6 matches:
 
 ## Related Skills
 
-- **/iter:iter-index** - Build the search index (required before searching)
+- **/iter:index** - Build the search index (required before searching)
 - **Grep** - Exact literal pattern matching (doesn't require index)
 - **Glob** - Find files by name patterns
 
@@ -251,12 +251,12 @@ Claude: Found 6 matches:
 
 1. **Build index** (first time or after major changes):
    ```bash
-   /iter:iter-index build
+   /iter:index build
    ```
 
 2. **Search for code**:
    ```bash
-   /iter:iter-search "authentication logic"
+   /iter:search "authentication logic"
    ```
 
 3. **Read relevant files**:
@@ -268,7 +268,7 @@ Claude: Found 6 matches:
 4. **Make changes** and update index:
    ```bash
    # After code changes
-   /iter:iter-index build
+   /iter:index build
    ```
 
 ## Troubleshooting
@@ -277,12 +277,12 @@ Claude: Found 6 matches:
 
 1. **Check index exists**:
    ```bash
-   /iter:iter-index status
+   /iter:index status
    ```
 
 2. **Build index if missing**:
    ```bash
-   /iter:iter-index build
+   /iter:index build
    ```
 
 3. **Try different search terms**:
@@ -296,10 +296,10 @@ If results don't match your current code:
 
 ```bash
 # Rebuild index
-/iter:iter-index build
+/iter:index build
 
 # Search again
-/iter:iter-search "<query>"
+/iter:search "<query>"
 ```
 
 ### Index Not Built
@@ -308,7 +308,7 @@ If results don't match your current code:
 Error: Code index not found
 
 Solution:
-1. Run: /iter:iter-index build
+1. Run: /iter:index build
 2. Wait for indexing to complete
 3. Try your search again
 ```
@@ -322,7 +322,7 @@ Solution:
 
 ## Technical Notes
 
-- Uses the index built by `/iter:iter-index`
+- Uses the index built by `/iter:index`
 - Combines semantic understanding with keyword matching
 - Respects `.gitignore` patterns (doesn't search excluded files)
 - Index is local (not shared across machines)
@@ -335,20 +335,20 @@ Solution:
 
 ```bash
 # Search for code
-/iter:iter-search "authentication"
+/iter:search "authentication"
 
 # Then use iter to implement changes
 /iter "add two-factor authentication support"
 
 # Or run tests
-/iter-test tests/auth_test.go
+/iter:test tests/auth_test.go
 ```
 
 ### Search-Driven Development
 
 1. Search to understand existing patterns:
    ```bash
-   /iter:iter-search "how API endpoints are defined"
+   /iter:search "how API endpoints are defined"
    ```
 
 2. Use findings to guide new implementation:
@@ -358,5 +358,5 @@ Solution:
 
 3. Update index with new code:
    ```bash
-   /iter:iter-index build
+   /iter:index build
    ```

@@ -65,10 +65,10 @@ claude plugin marketplace remove iter-local
 | Command | Description |
 |---------|-------------|
 | `/iter "<task>"` | Start iterative implementation |
-| `/iter-workflow "<spec>"` | Start workflow-based implementation |
-| `/iter-test <test-file> [tests...]` | Run tests with auto-fix iteration (max 3x) |
-| `/iter-index` | Manage the code index (status, build, clear, watch) |
-| `/iter-search "<query>"` | Search indexed code (semantic/keyword search) |
+| `/iter:workflow "<spec>"` | Start workflow-based implementation |
+| `/iter:test <test-file> [tests...]` | Run tests with auto-fix iteration (max 10x) |
+| `/iter:index` | Manage the code index (status, build, clear, watch) |
+| `/iter:search "<query>"` | Search indexed code (semantic/keyword search) |
 | `/iter:install` | Install `/iter` shortcut wrapper |
 
 ## Skills
@@ -98,7 +98,7 @@ The main skill for implementing features, fixing bugs, and refactoring code with
 
 [→ Full documentation](skills/run/README.md)
 
-### /iter:iter-workflow - Custom Workflow Execution
+### /iter:workflow - Custom Workflow Execution
 
 Execute custom workflow specifications for specialized iterative processes.
 
@@ -117,15 +117,15 @@ Execute custom workflow specifications for specialized iterative processes.
 - Configurable iteration limits and stabilization periods
 - Comprehensive documentation per iteration
 
-**Example**: `/iter:iter-workflow docs/stabilize-services.md`
+**Example**: `/iter:workflow docs/stabilize-services.md`
 
-[→ Full documentation](skills/iter-workflow/README.md)
+[→ Full documentation](skills/workflow/README.md)
 
-### /iter:iter-test - Test-Driven Iteration
+### /iter:test - Test-Driven Iteration
 
 Run Go tests with automated fix iteration until tests pass.
 
-**Purpose**: Execute tests, analyze failures, implement fixes, and retry up to 3 times with intelligent problem-solving.
+**Purpose**: Execute tests, analyze failures, implement fixes, and retry up to 10 times with intelligent problem-solving.
 
 **When to use**:
 - Running flaky or failing tests
@@ -134,24 +134,24 @@ Run Go tests with automated fix iteration until tests pass.
 - Automated test fixing
 
 **Key features**:
-- Automatic failure analysis
-- Root cause identification
-- Targeted fix implementation
-- Max 3 iterations per test run
+- NEVER modifies test files - tests are source of truth
+- Advises when test configuration appears incorrect
+- Root cause identification and targeted fix implementation
+- Max 10 iterations per test run
 - Complete documentation of attempts
 
-**Example**: `/iter:iter-test tests/docker/plugin_test.go TestPluginInstallation`
+**Example**: `/iter:test tests/docker/plugin_test.go TestPluginInstallation`
 
-[→ Full documentation](skills/iter-test/README.md)
+[→ Full documentation](skills/test/README.md)
 
-### /iter:iter-index - Code Index Management
+### /iter:index - Code Index Management
 
 Manage the code index used for semantic and keyword search.
 
 **Purpose**: Build, monitor, and maintain a searchable index of your codebase for fast code navigation.
 
 **When to use**:
-- Before using `/iter:iter-search`
+- Before using `/iter:search`
 - After significant code changes
 - To check index freshness
 - Setting up search functionality
@@ -162,11 +162,11 @@ Manage the code index used for semantic and keyword search.
 - `clear` - Remove index data
 - `watch` - Auto-update index on file changes
 
-**Example**: `/iter:iter-index build`
+**Example**: `/iter:index build`
 
-[→ Full documentation](skills/iter-index/README.md)
+[→ Full documentation](skills/index/README.md)
 
-### /iter:iter-search - Code Search
+### /iter:search - Code Search
 
 Search your indexed codebase using semantic or keyword search.
 
@@ -183,11 +183,11 @@ Search your indexed codebase using semantic or keyword search.
 - Keyword search (exact/fuzzy matching)
 - Ranked results with context
 - File paths and line numbers
-- Requires index built via `/iter:iter-index`
+- Requires index built via `/iter:index`
 
-**Example**: `/iter:iter-search "user authentication logic"`
+**Example**: `/iter:search "user authentication logic"`
 
-[→ Full documentation](skills/iter-search/README.md)
+[→ Full documentation](skills/search/README.md)
 
 ### /iter:install - Shortcut Installation
 
@@ -251,17 +251,17 @@ Created in `.iter/workdir/`:
 
 ## Test-Driven Iteration
 
-The `/iter-test` command runs tests with automated fix iteration (max 3 attempts):
+The `/iter:test` command runs tests with automated fix iteration (max 10 attempts):
 
 ```bash
 # Run specific test with auto-fix
-/iter-test tests/docker/plugin_test.go TestPluginInstallation
+/iter:test tests/docker/plugin_test.go TestPluginInstallation
 
 # Run multiple tests
-/iter-test tests/docker/iter_command_test.go TestIterRunCommandLine TestIterRunInteractive
+/iter:test tests/docker/iter_command_test.go TestIterRunCommandLine TestIterRunInteractive
 
 # Run all tests in file
-/iter-test tests/docker/plugin_test.go
+/iter:test tests/docker/plugin_test.go
 ```
 
 ### How It Works
@@ -270,12 +270,14 @@ The `/iter-test` command runs tests with automated fix iteration (max 3 attempts
 2. **If test fails**:
    - Analyzes error messages and stack traces
    - Reads test source to understand requirements
-   - Identifies root cause
-   - Implements targeted fixes
-   - Retries test (max 3 iterations)
+   - Identifies root cause in **implementation code**
+   - Implements targeted fixes (NEVER modifies test files)
+   - Advises if test configuration appears incorrect
+   - Retries test (max 10 iterations)
 3. **Documents everything**:
    - Each iteration's analysis and changes
    - Test outputs and results
+   - Test configuration advisories
    - Final summary with all fixes
 
 ### Output
@@ -291,7 +293,7 @@ Session state in `.iter/workdir/test-{slug}-{timestamp}/`
 ### Example
 
 ```
-/iter-test tests/docker/plugin_test.go TestPluginInstallation
+/iter:test tests/docker/plugin_test.go TestPluginInstallation
 
 → Iteration 1: FAIL
   Error: Docker image build failed
@@ -302,7 +304,7 @@ Session state in `.iter/workdir/test-{slug}-{timestamp}/`
   Fix: Update loadAPIKey helper
 
 → Iteration 3: PASS
-  ✓ All tests passed
+  All tests passed
 ```
 
 ## Testing
@@ -375,10 +377,12 @@ iter/
 │   ├── plugin.json              # Plugin manifest template
 │   └── marketplace.json         # Marketplace manifest template
 ├── skills/                      # Skill definitions (source)
-│   ├── iter/SKILL.md
-│   ├── iter-workflow/SKILL.md
-│   ├── iter-index/SKILL.md
-│   └── iter-search/SKILL.md
+│   ├── run/SKILL.md             # Core iterative implementation
+│   ├── workflow/SKILL.md        # Custom workflow execution
+│   ├── test/SKILL.md            # Test-driven iteration
+│   ├── index/SKILL.md           # Code index management
+│   ├── search/SKILL.md          # Code search
+│   └── install/SKILL.md         # Shortcut installation
 ├── hooks/hooks.json             # Stop hook
 ├── cmd/iter/main.go             # Binary source (all logic here)
 ├── scripts/build.sh             # Build script

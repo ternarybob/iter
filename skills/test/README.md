@@ -1,25 +1,27 @@
-# iter-test Skill
+# test Skill
 
 ## Overview
 
-The `iter-test` skill provides automated test execution with intelligent fix iteration. It runs Go tests, analyzes failures, implements fixes, and retries up to 3 times until tests pass.
+The `test` skill provides automated test execution with intelligent fix iteration. It runs Go tests, analyzes failures, implements fixes, and retries up to 10 times until tests pass.
+
+**Critical**: This skill NEVER modifies test files. Tests are the source of truth for requirements. Only implementation code is fixed.
 
 ## Usage
 
 ```bash
 # Run specific test
-/iter-test tests/docker/plugin_test.go TestPluginInstallation
+/iter:test tests/docker/plugin_test.go TestPluginInstallation
 
 # Run multiple tests
-/iter-test tests/docker/iter_command_test.go TestIterRunCommandLine TestIterRunInteractive
+/iter:test tests/docker/iter_command_test.go TestIterRunCommandLine TestIterRunInteractive
 
 # Run all tests in file
-/iter-test tests/docker/plugin_test.go
+/iter:test tests/docker/plugin_test.go
 ```
 
 ## How It Works
 
-### Iteration Loop (Max 3 iterations)
+### Iteration Loop (Max 10 iterations)
 
 1. **Execute Test**
    - Runs `go test` with verbose output
@@ -30,17 +32,49 @@ The `iter-test` skill provides automated test execution with intelligent fix ite
    - Extracts error messages and stack traces
    - Reads test source code to understand requirements
    - Identifies root cause of failure
-   - Creates fix plan
+   - Checks for test configuration issues (see advisory below)
+   - Creates fix plan for **implementation code only**
 
 3. **Implement Fixes**
-   - Makes targeted code changes
+   - Makes targeted code changes to **implementation** (NEVER the test)
    - Verifies build still passes
    - Documents all changes
 
 4. **Retry or Complete**
    - If test passes: Document success and exit
-   - If iteration < 3: Retry test with fixes
-   - If iteration = 3 and still failing: Document failure
+   - If iteration < 10: Retry test with fixes
+   - If iteration = 10 and still failing: Document failure
+
+## Test File Preservation
+
+**NEVER modifies test files.** When a test fails:
+- Fix the **implementation code** to satisfy the test
+- Fix **configuration files** if needed
+- Fix **environment setup** if required
+- **DO NOT** change test assertions, expected values, or test logic
+
+## Test Configuration Advisory
+
+When the test itself appears misconfigured (not the implementation), the skill outputs an advisory but does NOT auto-fix:
+
+```
+TEST CONFIGURATION ADVISORY
+
+The test file may need adjustment. This skill does NOT modify test files.
+
+Issue detected: [description]
+
+Suggested user action:
+- [What the user should check/change in the test file]
+
+Continuing to iterate on implementation code...
+```
+
+### Detectable Test Issues:
+- Missing imports or fixtures
+- Syntax errors in test file
+- Impossible assertions
+- Environment mismatches (Docker unavailable, wrong OS, etc.)
 
 ## Output Structure
 
@@ -58,17 +92,18 @@ The `iter-test` skill provides automated test execution with intelligent fix ite
 ## Example Session
 
 ```
-/iter-test tests/docker/plugin_test.go TestPluginInstallation
+/iter:test tests/docker/plugin_test.go TestPluginInstallation
 
-✓ Session initialized: test-plugin-installation-20260126-172345
-✓ Test file: tests/docker/plugin_test.go
-✓ Test package: ./tests/docker
-✓ Tests: TestPluginInstallation
-✓ Results directory: tests/results/20260126-172345-plugin-installation/
+Session initialized: test-plugin-installation-20260126-172345
+Test file: tests/docker/plugin_test.go
+Test package: ./tests/docker
+Tests: TestPluginInstallation
+Results directory: tests/results/20260126-172345-plugin-installation/
+Max iterations: 10
 
-=== Iteration 1/3 ===
-→ Running tests...
-✗ Tests FAILED (exit code: 1)
+=== Iteration 1/10 ===
+Running tests...
+Tests FAILED (exit code: 1)
 
 Analyzing failures...
 - Test: TestPluginInstallation
@@ -79,9 +114,9 @@ Implementing fixes...
 - Modified: tests/docker/Dockerfile
 - Added: curl package to apt-get install
 
-=== Iteration 2/3 ===
-→ Running tests...
-✗ Tests FAILED (exit code: 1)
+=== Iteration 2/10 ===
+Running tests...
+Tests FAILED (exit code: 1)
 
 Analyzing failures...
 - Test: TestPluginInstallation
@@ -92,12 +127,12 @@ Implementing fixes...
 - Modified: tests/docker/setup_test.go
 - Updated: loadAPIKey function to read .env
 
-=== Iteration 3/3 ===
-→ Running tests...
-✓ Tests PASSED
+=== Iteration 3/10 ===
+Running tests...
+Tests PASSED
 
 ========================================
-✓ TESTS PASSED after 3 iteration(s)
+TESTS PASSED after 3 iteration(s)
 ========================================
 
 Results: tests/results/20260126-172345-plugin-installation/
@@ -122,6 +157,7 @@ Summary: tests/results/20260126-172345-plugin-installation/test-results.md
 - Distinguishes root causes from symptoms
 - Makes targeted fixes (not blanket changes)
 - Verifies changes don't break other code
+- Detects test configuration issues
 
 ### Screenshot Support (Optional)
 For Docker or UI tests:
@@ -131,12 +167,14 @@ For Docker or UI tests:
 
 ## Rules
 
-1. **Max 3 Iterations** - Never exceed 3 test-fix cycles
-2. **Verbose Output** - Always run tests with `-v` flag
-3. **Save Everything** - All outputs, logs, changes to results directory
-4. **Fix Root Cause** - Don't patch symptoms
-5. **Verify Builds** - Run `go build ./...` after changes
-6. **Use Tasks** - Track progress with TaskCreate/TaskUpdate
+1. **Max 10 Iterations** - Never exceed 10 test-fix cycles
+2. **NEVER Modify Tests** - Tests are the source of truth
+3. **Verbose Output** - Always run tests with `-v` flag
+4. **Save Everything** - All outputs, logs, changes to results directory
+5. **Fix Root Cause** - Don't patch symptoms
+6. **Verify Builds** - Run `go build ./...` after changes
+7. **Use Tasks** - Track progress with TaskCreate/TaskUpdate
+8. **Advise on Test Issues** - Output advisory when test appears misconfigured
 
 ## Requirements
 
@@ -157,27 +195,27 @@ The skill integrates with the iter workflow system:
 - Uses `.iter/workdir/` for session state
 - Creates task list for iteration tracking
 - Documents in markdown format
-- Follows structured analysis → fix → verify pattern
+- Follows structured analysis -> fix -> verify pattern
 
 ## Examples
 
 ### Example 1: Docker Integration Test
 ```bash
-/iter-test tests/docker/plugin_test.go TestPluginInstallation
+/iter:test tests/docker/plugin_test.go TestPluginInstallation
 ```
 
 Runs the Docker integration test, fixes any issues with Docker setup, plugin installation, or API configuration.
 
 ### Example 2: Multiple Unit Tests
 ```bash
-/iter-test cmd/iter/workflow_test.go TestWorkflowParsing TestWorkflowValidation
+/iter:test cmd/iter/workflow_test.go TestWorkflowParsing TestWorkflowValidation
 ```
 
 Runs specific unit tests, fixes parsing or validation logic issues.
 
 ### Example 3: All Tests in Package
 ```bash
-/iter-test tests/docker/iter_command_test.go
+/iter:test tests/docker/iter_command_test.go
 ```
 
 Runs all Test* functions in the file, fixing any failures iteratively.
@@ -194,7 +232,7 @@ Verify the path is correct relative to project root.
 
 ### Max Iterations Exceeded
 ```
-FAILED: Test still failing after 3 iterations
+FAILED: Test still failing after 10 iterations
 Last Error: [error message]
 Manual intervention required.
 ```
@@ -208,3 +246,14 @@ Fix build errors before running iter-test.
 ```
 
 Run `go build ./...` to identify and fix compilation errors first.
+
+### Test Configuration Advisory Output
+```
+TEST CONFIGURATION ADVISORY
+
+The test file may need adjustment. This skill does NOT modify test files.
+
+Issue detected: Test expects environment variable API_KEY but none defined
+```
+
+Review the test file manually and make necessary corrections.

@@ -1,6 +1,6 @@
 ---
-name: iter-search
-description: Search indexed code using semantic or keyword search. Returns relevant code locations with context. Requires index built via iter-index.
+name: search
+description: Search indexed code using semantic or keyword search. Returns relevant code locations with context. Requires index built via /iter:index.
 allowed-tools: ["Bash", "Read", "Glob", "Grep"]
 ---
 
@@ -17,6 +17,6 @@ Present the search results from the output above:
 3. **Suggest navigation** - offer to read specific files for more detail
 
 If no results found, suggest:
-- Checking if index is built (`/iter:iter-index status`)
+- Checking if index is built (`/iter:index status`)
 - Trying different search terms
 - Using Grep for literal pattern matching

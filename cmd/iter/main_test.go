@@ -319,10 +319,10 @@ func TestSkillsExist(t *testing.T) {
 	skillsDir := filepath.Join(projectRoot, "skills")
 
 	expectedSkills := []string{
-		"iter",
-		"iter-workflow",
-		"iter-index",
-		"iter-search",
+		"workflow",
+		"index",
+		"search",
+		"test",
 		"run",
 		"install",
 	}

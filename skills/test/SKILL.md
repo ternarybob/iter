@@ -1,21 +1,21 @@
 ---
-name: iter-test
-description: Run tests with automated iteration until pass (max 3 iterations)
+name: test
+description: Run tests with automated iteration until pass (max 10 iterations)
 arguments: <test-file> [test-names...]
 examples:
-  - iter-test tests/docker/plugin_test.go TestPluginInstallation
-  - iter-test tests/docker/iter_command_test.go TestIterRunCommandLine TestIterRunInteractive
-  - iter-test tests/docker/plugin_test.go
+  - test tests/docker/plugin_test.go TestPluginInstallation
+  - test tests/docker/iter_command_test.go TestIterRunCommandLine TestIterRunInteractive
+  - test tests/docker/plugin_test.go
 ---
 
 # Test-Driven Iteration
 
-Executes Go tests with automated iteration to fix failures. Runs up to 3 iterations until tests pass.
+Executes Go tests with automated iteration to fix failures. Runs up to 10 iterations until tests pass.
 
 ## Usage
 
 ```bash
-/iter:iter-test <test-file> [test-names...]
+/iter:test <test-file> [test-names...]
 ```
 
 ## Arguments
@@ -27,13 +27,13 @@ Executes Go tests with automated iteration to fix failures. Runs up to 3 iterati
 
 ```bash
 # Run specific test with iteration
-/iter:iter-test tests/docker/plugin_test.go TestPluginInstallation
+/iter:test tests/docker/plugin_test.go TestPluginInstallation
 
 # Run multiple tests
-/iter:iter-test tests/docker/iter_command_test.go TestIterRunCommandLine TestIterRunInteractive
+/iter:test tests/docker/iter_command_test.go TestIterRunCommandLine TestIterRunInteractive
 
 # Run all tests in file
-/iter:iter-test tests/docker/plugin_test.go
+/iter:test tests/docker/plugin_test.go
 ```
 
 ## Behavior
@@ -42,9 +42,9 @@ Executes Go tests with automated iteration to fix failures. Runs up to 3 iterati
 2. **Executes** specified tests
 3. **Captures** test output and results
 4. **Documents** failures and creates fix plan
-5. **Iterates** up to 3 times to fix failures
+5. **Iterates** up to 10 times to fix implementation (NOT the test)
 6. **Saves** results to `tests/results/{timestamp}-{test-name}/`
-7. **Takes screenshots** every 10-30 seconds if monitoring available
+7. **Advises** when test appears misconfigured (does NOT auto-fix tests)
 
 ## Output Documentation
 
@@ -52,7 +52,7 @@ Each iteration documents:
 - Task list with current objectives
 - Test execution results
 - Changes made to fix failures
-- Screenshots of monitoring (if available)
+- Test configuration advisory (if applicable)
 
 Results saved to test's results directory structure.
 
@@ -77,7 +77,7 @@ done
 if [ -z "$TEST_FILE" ]; then
     echo "ERROR: Test file required"
     echo ""
-    echo "Usage: /iter:iter-test <test-file> [test-names...]"
+    echo "Usage: /iter:test <test-file> [test-names...]"
     exit 1
 fi
 
@@ -113,6 +113,7 @@ TEST_NAMES=${TEST_NAMES[*]}
 RESULTS_DIR=$RESULTS_DIR
 SESSION_ID=$SESSION_ID
 TIMESTAMP=$TIMESTAMP
+MAX_ITERATIONS=10
 EOF
 
 echo "✓ Session initialized: $SESSION_ID"
@@ -124,15 +125,72 @@ else
     echo "✓ Tests: all tests in file"
 fi
 echo "✓ Results directory: $RESULTS_DIR"
+echo "✓ Max iterations: 10"
 echo ""
 cat "$SESSION_DIR/session-info.txt"
 `
 
 ## Your Mission
 
-You are executing the **iter-test** skill for automated test iteration with the session information above.
+You are executing the **test** skill for automated test iteration with the session information above.
 
-Run the specified Go tests and iterate to fix any failures (max 3 iterations). Document everything thoroughly.
+Run the specified Go tests and iterate to fix any failures (max 10 iterations). Document everything thoroughly.
+
+## CRITICAL: Test File Preservation
+
+**NEVER modify the test file itself.** The test file is the source of truth for requirements.
+
+When a test fails:
+1. Fix the **implementation code** to satisfy the test
+2. Fix **configuration files** if the test expects certain config
+3. Fix **environment setup** if the test requires specific conditions
+4. **DO NOT** change the test assertions, expected values, or test logic
+
+If the test itself appears to be incorrectly configured, see "Test Configuration Advisory" below.
+
+## Test Configuration Advisory
+
+Sometimes tests fail because the **test itself** is misconfigured, not the implementation. When you detect any of the following issues, output an advisory message but **DO NOT automatically fix the test**:
+
+### Detectable Test Issues
+
+1. **Missing imports or fixtures**
+   - Test imports packages that don't exist
+   - Test references fixture files that are missing
+   - Test expects environment variables not defined
+
+2. **Syntax errors in test**
+   - Compilation errors in the test file itself
+   - Malformed test function signatures
+
+3. **Impossible assertions**
+   - Test expects values that can never be produced
+   - Test compares unrelated types
+   - Test has logical contradictions
+
+4. **Environment mismatches**
+   - Test expects Docker but Docker is unavailable
+   - Test expects specific OS/architecture
+   - Test expects network connectivity that's unavailable
+
+### Advisory Format
+
+When you detect a test configuration issue, output:
+
+```
+⚠️ TEST CONFIGURATION ADVISORY
+
+The test file may need adjustment. This skill does NOT modify test files.
+
+Issue detected: [description]
+
+Suggested user action:
+- [What the user should check/change in the test file]
+
+Continuing to iterate on implementation code...
+```
+
+Then continue trying to make the implementation pass the test (if possible), or document that manual test changes are required.
 
 ## Execution Instructions
 
@@ -142,17 +200,18 @@ Run the specified Go tests and iterate to fix any failures (max 3 iterations). D
    ```
    Task 1: "Run test iteration 1" - Run tests and capture results
    Task 2: "Run test iteration 2" - Retry after fixes (if needed)
-   Task 3: "Run test iteration 3" - Final retry (if needed)
-   Task 4: "Create final summary" - Document all iterations
+   ...
+   Task 10: "Run test iteration 10" - Final retry (if needed)
+   Task 11: "Create final summary" - Document all iterations
    ```
 
 2. **Mark tasks in progress** before starting each iteration
 
 3. **Mark tasks completed** when done
 
-### Iteration Workflow (Repeat up to 3 times)
+### Iteration Workflow (Repeat up to 10 times)
 
-For each iteration (1, 2, 3):
+For each iteration (1 through 10):
 
 **Step 1: Run Tests**
 
@@ -183,28 +242,32 @@ Save output to `$RESULTS_DIR/iteration-N-output.log`
 3. Extract error messages and stack traces
 4. Read the test source code to understand what's being tested
 5. Identify the root cause
+6. **Check for test configuration issues** (see advisory section above)
 
 Create `$SESSION_DIR/iteration-N-analysis.md` documenting:
 - Failed test names
 - Error messages
 - Root cause analysis
-- Fix plan
+- Test configuration advisory (if applicable)
+- Fix plan (for implementation code only)
 
 **Step 4: Implement Fixes**
 
-1. Based on analysis, identify files to modify
+**REMINDER: Only fix implementation code, NOT the test file.**
+
+1. Based on analysis, identify implementation files to modify
 2. Read the relevant source files
 3. Make targeted fixes using Edit tool
 4. Verify changes compile: `go build ./...`
 
 Create `$SESSION_DIR/iteration-N-changes.md` documenting:
-- Files modified
+- Files modified (should NOT include test file)
 - Changes made
 - Rationale for each change
 
 **Step 5: Proceed to Next Iteration**
 
-- If this was iteration 3 and still failing: Go to "Document Failure"
+- If this was iteration 10 and still failing: Go to "Document Failure"
 - Otherwise: Return to Step 1 for next iteration
 
 ### Document Success
@@ -230,7 +293,7 @@ Tests passed after [N] iteration(s).
 
 ## Changes Made
 
-[List all changes across iterations]
+[List all changes across iterations - should be implementation code only]
 
 ## Test Output
 
@@ -241,31 +304,35 @@ Mark final task as completed and report success to user.
 
 ### Document Failure
 
-If tests still fail after 3 iterations, create `$RESULTS_DIR/test-results.md`:
+If tests still fail after 10 iterations, create `$RESULTS_DIR/test-results.md`:
 
 ```markdown
 # Test Results: FAIL
 
 **Test File**: [file]
 **Tests**: [test names]
-**Final Status**: FAIL after 3 iterations
+**Final Status**: FAIL after 10 iterations
 **Session**: [session-id]
 
 ## Summary
 
-Tests still failing after maximum 3 iterations. Manual intervention required.
+Tests still failing after maximum 10 iterations. Manual intervention required.
 
 ## Last Error
 
-[Error from iteration 3]
+[Error from iteration 10]
 
 ## Attempted Fixes
 
-[Summary of all changes made]
+[Summary of all changes made to implementation code]
+
+## Test Configuration Issues
+
+[Any advisories about test file issues detected]
 
 ## Recommendations
 
-[Suggestions for manual debugging]
+[Suggestions for manual debugging, including any test changes that may be needed]
 
 ## Artifacts
 
@@ -277,12 +344,14 @@ Report failure to user with recommendations.
 
 ## Critical Rules
 
-1. **MAX 3 ITERATIONS** - Never exceed 3 test-fix cycles
-2. **VERBOSE OUTPUT** - Always run tests with `-v` flag
-3. **SAVE EVERYTHING** - All outputs, logs, and changes to results directory
-4. **FIX ROOT CAUSE** - Don't just patch symptoms
-5. **VERIFY BUILDS** - Always run `go build ./...` after changes
-6. **USE TASKS** - Create and update tasks for each iteration
+1. **MAX 10 ITERATIONS** - Never exceed 10 test-fix cycles
+2. **NEVER MODIFY TEST FILES** - Tests are the source of truth
+3. **VERBOSE OUTPUT** - Always run tests with `-v` flag
+4. **SAVE EVERYTHING** - All outputs, logs, and changes to results directory
+5. **FIX ROOT CAUSE** - Don't just patch symptoms
+6. **VERIFY BUILDS** - Always run `go build ./...` after changes
+7. **USE TASKS** - Create and update tasks for each iteration
+8. **ADVISE ON TEST ISSUES** - Output advisory when test appears misconfigured
 
 ## Screenshots (Optional Enhancement)
 
@@ -303,11 +372,12 @@ This is optional - only if test involves visual monitoring.
 ## Example Flow
 
 ```
-/iter:iter-test tests/docker/plugin_test.go TestPluginInstallation
+/iter:test tests/docker/plugin_test.go TestPluginInstallation
 
 → Session initialized
   ✓ Test: TestPluginInstallation
   ✓ Results: tests/results/20260126-180523-plugin-installation/
+  ✓ Max iterations: 10
 
 → Iteration 1: FAIL
   Error: Docker image build failed
@@ -329,9 +399,10 @@ This is optional - only if test involves visual monitoring.
 - Session state saved to `.iter/workdir/test-{slug}-{timestamp}/`
 - All outputs saved to `tests/results/{timestamp}-{test-slug}/`
 - Use TaskCreate/TaskUpdate for tracking progress
-- Maximum 3 iterations (never exceed)
+- Maximum 10 iterations (never exceed)
+- **NEVER modify test files** - advise user if test needs changes
 - Document everything in markdown files
 
 ---
 
-Begin execution now. Create tasks, run tests, iterate until pass (max 3x).
+Begin execution now. Create tasks, run tests, iterate until pass (max 10x).

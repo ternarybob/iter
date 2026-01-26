@@ -89,32 +89,32 @@ When Iter is running:
 
 ```bash
 /iter "<task>"                          # Start iterative implementation
-/iter-workflow "<spec>"                 # Start workflow-based implementation
-/iter-test <test-file> [tests...]      # Run tests with auto-fix (max 3 iterations)
-/iter-index                            # Manage code index
-/iter-search "<query>"                 # Search indexed code
+/iter:workflow "<spec>"                 # Start workflow-based implementation
+/iter:test <test-file> [tests...]       # Run tests with auto-fix (max 10 iterations)
+/iter:index                             # Manage code index
+/iter:search "<query>"                  # Search indexed code
 ```
 
 ### Test-Driven Iteration
 
-Use `/iter-test` to run Go tests with automated fix iteration:
+Use `/iter:test` to run Go tests with automated fix iteration:
 
 ```bash
 # Run specific test
-/iter-test tests/docker/plugin_test.go TestPluginInstallation
+/iter:test tests/docker/plugin_test.go TestPluginInstallation
 
 # Run multiple tests
-/iter-test tests/docker/iter_command_test.go TestIterRunCommandLine TestIterRunInteractive
+/iter:test tests/docker/iter_command_test.go TestIterRunCommandLine TestIterRunInteractive
 
 # Run all tests in file
-/iter-test tests/docker/plugin_test.go
+/iter:test tests/docker/plugin_test.go
 ```
 
-**Workflow:**
-1. Run test and capture output
-2. If fail: Analyze error → Fix issue → Retry (max 3x)
-3. Document all iterations
-4. Save results to `tests/results/{timestamp}-{test-name}/`
+**Key behaviors:**
+- NEVER modifies test files - tests are the source of truth
+- Advises when test configuration appears incorrect
+- Fixes implementation code only (max 10 iterations)
+- Documents all iterations and changes
 
 **Session state:** `.iter/workdir/test-{slug}-{timestamp}/`
 

@@ -1,8 +1,8 @@
-# iter-workflow Skill
+# workflow Skill
 
 ## Overview
 
-The `iter-workflow` skill executes custom workflow specifications for specialized iterative processes. Unlike `/iter:run` which follows a standard ARCHITECT/WORKER/VALIDATOR pattern, this skill allows you to define custom workflows with specific phases, priorities, and success criteria.
+The `workflow` skill executes custom workflow specifications for specialized iterative processes. Unlike `/iter:run` which follows a standard ARCHITECT/WORKER/VALIDATOR pattern, this skill allows you to define custom workflows with specific phases, priorities, and success criteria.
 
 Use this skill when you need:
 - Specialized iteration logic
@@ -14,11 +14,11 @@ Use this skill when you need:
 
 ```bash
 # From file
-/iter:iter-workflow docs/example-workflow.md
-/iter:iter-workflow .claude/stabilize-services.md
+/iter:workflow docs/example-workflow.md
+/iter:workflow .claude/stabilize-services.md
 
 # Inline spec (for short workflows)
-/iter:iter-workflow "# Workflow\nMIN_ITERATIONS: 3\n..."
+/iter:workflow "# Workflow\nMIN_ITERATIONS: 3\n..."
 ```
 
 The skill accepts either:
@@ -433,7 +433,7 @@ Stabilize production services after deployment.
 
 **Execution**:
 ```bash
-User: /iter:iter-workflow docs/stabilize-services.md
+User: /iter:workflow docs/stabilize-services.md
 
 Claude: [ARCHITECT]
         Initializing workflow...
@@ -483,7 +483,7 @@ Improve system performance iteratively.
 
 **Execution**:
 ```bash
-User: /iter:iter-workflow docs/optimize-performance.md
+User: /iter:workflow docs/optimize-performance.md
 
 Claude: [ARCHITECT]
         Setting up performance optimization workflow...
@@ -545,7 +545,7 @@ Systematically debug and fix errors in production.
 ## Related Skills
 
 - **/iter:run** - Standard iterative implementation (general purpose)
-- **/iter:iter-test** - Test-driven iteration with auto-fix
+- **/iter:test** - Test-driven iteration with auto-fix
 - **/iter:install** - Install `/iter` shortcut wrapper
 
 ## Tips
@@ -632,7 +632,7 @@ Review `summary.md`:
 
 ## Philosophy
 
-iter-workflow embodies:
+workflow embodies:
 
 1. **Systematic approach** - One issue at a time, highest priority first
 2. **Documentation-driven** - Every decision and action documented

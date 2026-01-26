@@ -1,5 +1,5 @@
 ---
-name: iter-workflow
+name: workflow
 description: Start workflow-based implementation with custom workflow spec. Executes phases sequentially using task management for ordered iteration.
 allowed-tools: ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "TaskCreate", "TaskUpdate", "TaskList"]
 ---

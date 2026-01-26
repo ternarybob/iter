@@ -414,10 +414,10 @@ Session state tracked in `.iter/state.json`:
 ## Related Skills
 
 - **/iter:install** - Install `/iter` shortcut wrapper
-- **/iter:iter-workflow** - Custom workflow-based implementation
-- **/iter:iter-test** - Test-driven iteration with auto-fix
-- **/iter:iter-index** - Build code index for navigation
-- **/iter:iter-search** - Search indexed codebase
+- **/iter:workflow** - Custom workflow-based implementation
+- **/iter:test** - Test-driven iteration with auto-fix
+- **/iter:index** - Build code index for navigation
+- **/iter:search** - Search indexed codebase
 
 ## Binary Commands
 
