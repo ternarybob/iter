@@ -42,4 +42,4 @@ bin/
 test/docker/.env
 
 # Test results
-test/results
+tests/results

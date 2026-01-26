@@ -23,8 +23,8 @@ Unit tests verify binary functionality without Docker or API access.
 ### Docker Integration Tests
 
 ```bash
-# Requires ANTHROPIC_API_KEY in environment or test/docker/.env
-ANTHROPIC_API_KEY=sk-... go test ./test/docker/... -v -timeout 15m
+# Requires ANTHROPIC_API_KEY in environment or tests/docker/.env
+ANTHROPIC_API_KEY=sk-... go test ./tests/docker/... -v -timeout 15m
 ```
 
 Docker tests run **sequentially** in guaranteed order:
@@ -36,7 +36,7 @@ Docker tests run **sequentially** in guaranteed order:
 
 The Docker image is built **once** before all subtests to optimize execution time.
 
-**Results** are saved to `test/results/{timestamp}-docker/`:
+**Results** are saved to `tests/results/{timestamp}-docker/`:
 - `test-output.log` - Full test output
 - `result.txt` - Pass/fail status with any missing checks
 

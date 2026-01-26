@@ -147,7 +147,7 @@ if [ -z "$ANTHROPIC_API_KEY" ]; then
     echo "=========================================="
     echo ""
     echo "Claude integration tests require an API key."
-    echo "Set ANTHROPIC_API_KEY in test/docker/.env or pass via:"
+    echo "Set ANTHROPIC_API_KEY in tests/docker/.env or pass via:"
     echo "  docker run -e ANTHROPIC_API_KEY=sk-... iter-plugin-test"
     echo ""
     exit 1

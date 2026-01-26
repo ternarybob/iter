@@ -130,11 +130,11 @@ Docker tests verify `/iter:run` works in Claude. **Requires API key.**
 
 ```bash
 # Setup: Copy .env.example and add your API key
-cp test/docker/.env.example test/docker/.env
-# Edit test/docker/.env and set ANTHROPIC_API_KEY=sk-ant-...
+cp tests/docker/.env.example tests/docker/.env
+# Edit tests/docker/.env and set ANTHROPIC_API_KEY=sk-ant-...
 
 # Run Docker integration tests
-go test ./test/docker/... -v
+go test ./tests/docker/... -v
 ```
 
 **Docker Tests:**
@@ -144,7 +144,7 @@ go test ./test/docker/... -v
 
 ### Test Results
 
-Test results are saved to `test/results/{timestamp}-docker/`:
+Test results are saved to `tests/results/{timestamp}-docker/`:
 - `test-output.log` - Full test output
 - `result.txt` - Pass/fail status and summary
 
@@ -152,7 +152,7 @@ Test results are saved to `test/results/{timestamp}-docker/`:
 
 ```bash
 # Build image
-docker build -t iter-plugin-test -f test/docker/Dockerfile .
+docker build -t iter-plugin-test -f tests/docker/Dockerfile .
 
 # Run with API key
 docker run -e ANTHROPIC_API_KEY=sk-... iter-plugin-test
