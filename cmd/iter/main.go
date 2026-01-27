@@ -4,11 +4,16 @@
 // It implements a structured iterative approach where work is planned, executed,
 // and validated until requirements/tests are achieved.
 //
-// Usage:
+// Usage (unified syntax):
 //
-//	iter run "<task>"                  - Start iterative implementation
-//	iter workflow "<spec>"             - Start workflow-based implementation
-//	iter test <file> [tests...]        - Start test-driven iteration
+//	iter "<task>"                      - Start iterative implementation (default)
+//	iter -t:<file> <description>       - Start test-driven iteration
+//	iter -w:<file> <description>       - Start workflow from file
+//	iter -r                            - Rebuild code index
+//	iter -v                            - Show version
+//
+// Session management:
+//
 //	iter status                        - Show current session status
 //	iter pass                          - Record validation pass
 //	iter reject "<reason>"             - Record validation rejection
@@ -287,16 +292,16 @@ var version = "dev"
 
 // installerSnippet is printed on version/install to help users set up /iter shortcut
 const installerSnippet = `
-To enable /iter shortcut (instead of /iter:run):
+To enable /iter shortcut (instead of /iter:iter):
 
   Mac/Linux/WSL:
     mkdir -p ~/.claude/skills/iter && cat << 'EOF' > ~/.claude/skills/iter/SKILL.md
 ---
 name: iter
-description: Run iter default workflow (wrapper for iter plugin)
+description: Adversarial iterative implementation. Use -v for version, -t:<file> for test mode, -w:<file> for workflow mode, -r to reindex, or just provide a task description.
 ---
 
-Execute the plugin skill ` + "`/iter:run`" + ` with the same arguments.
+Execute the plugin skill ` + "`/iter:iter`" + ` with the same arguments.
 
 Arguments:
 $ARGUMENTS
@@ -306,10 +311,10 @@ EOF
     $d="$env:USERPROFILE\.claude\skills\iter"; md $d -Force; @"
 ---
 name: iter
-description: Run iter default workflow (wrapper for iter plugin)
+description: Adversarial iterative implementation. Use -v for version, -t:<file> for test mode, -w:<file> for workflow mode, -r to reindex, or just provide a task description.
 ---
 
-Execute the plugin skill ` + "``" + `/iter:run` + "``" + ` with the same arguments.
+Execute the plugin skill ` + "``" + `/iter:iter` + "``" + ` with the same arguments.
 
 Arguments:
 ` + "`" + `$ARGUMENTS
@@ -534,61 +539,128 @@ type HookSpecificOutput struct {
 	UpdatedInput       map[string]any `json:"updatedInput,omitempty"`
 }
 
-func main() {
-	if len(os.Args) < 2 {
-		printUsage()
-		os.Exit(1)
+// parseUnifiedArgs parses the new unified flag syntax.
+// Returns: mode, modeArg (file path for -t/-w), description, and remaining args.
+func parseUnifiedArgs(args []string) (mode, modeArg, description string, remaining []string) {
+	if len(args) == 0 {
+		return "help", "", "", nil
 	}
 
-	cmd := os.Args[1]
-	args := os.Args[2:]
+	first := args[0]
+
+	// Check for version flag
+	if first == "-v" || first == "--version" || first == "version" {
+		return "version", "", "", args[1:]
+	}
+
+	// Check for help flag
+	if first == "-h" || first == "--help" || first == "help" {
+		return "help", "", "", args[1:]
+	}
+
+	// Check for reindex flag
+	if first == "-r" || first == "--reindex" {
+		return "reindex", "", "", args[1:]
+	}
+
+	// Check for test flag: -t:<file>
+	if strings.HasPrefix(first, "-t:") {
+		modeArg = strings.TrimPrefix(first, "-t:")
+		if len(args) > 1 {
+			description = strings.Join(args[1:], " ")
+		}
+		return "test", modeArg, description, nil
+	}
+
+	// Check for workflow flag: -w:<file>
+	if strings.HasPrefix(first, "-w:") {
+		modeArg = strings.TrimPrefix(first, "-w:")
+		if len(args) > 1 {
+			description = strings.Join(args[1:], " ")
+		}
+		return "workflow", modeArg, description, nil
+	}
+
+	// Check for internal/session management commands
+	internalCommands := map[string]bool{
+		"status":             true,
+		"step":               true,
+		"pass":               true,
+		"reject":             true,
+		"next":               true,
+		"complete":           true,
+		"reset":              true,
+		"hook-stop":          true,
+		"hook-session-start": true,
+		"install":            true,
+		"index":              true,
+	}
+
+	if internalCommands[first] {
+		return first, "", "", args[1:]
+	}
+
+	// Default: run mode with task description
+	description = strings.Join(args, " ")
+	return "run", "", description, nil
+}
+
+func main() {
+	args := os.Args[1:]
+	mode, modeArg, description, remaining := parseUnifiedArgs(args)
 
 	// Auto-start index daemon for commands that benefit from it
-	// Skip for: daemon stop, version, help, hook-stop, reset
-	if shouldAutoStartDaemon(cmd, args) {
+	if shouldAutoStartDaemonForMode(mode) {
 		repoRoot := findProjectRoot()
 		cfg := index.DefaultConfig(repoRoot)
 		ensureIndexDaemon(cfg)
 	}
 
 	var err error
-	switch cmd {
-	case "run":
-		err = cmdRun(args)
-	case "workflow":
-		err = cmdWorkflow(args)
-	case "status":
-		err = cmdStatus(args)
-	case "step":
-		err = cmdStep(args)
-	case "pass":
-		err = cmdPass(args)
-	case "reject":
-		err = cmdReject(args)
-	case "next":
-		err = cmdNext(args)
-	case "complete":
-		err = cmdComplete(args)
-	case "reset":
-		err = cmdReset(args)
-	case "hook-stop":
-		err = cmdHookStop(args)
-	case "hook-session-start":
-		err = cmdHookSessionStart(args)
-	case "index":
-		err = cmdIndex(args)
-	case "search":
-		err = cmdSearch(args)
-	case "test":
-		err = cmdTest(args)
-	case "version", "-v", "--version":
+	switch mode {
+	case "version":
 		cmdVersion()
+	case "help":
+		printUsage()
+	case "run":
+		err = cmdRun([]string{description})
+	case "test":
+		// Parse test file and optional test names from modeArg and description
+		testArgs := []string{modeArg}
+		if description != "" {
+			testArgs = append(testArgs, strings.Fields(description)...)
+		}
+		err = cmdTest(testArgs)
+	case "workflow":
+		err = cmdWorkflowFromFile(modeArg, description)
+	case "reindex":
+		repoRoot := findProjectRoot()
+		cfg := index.DefaultConfig(repoRoot)
+		err = cmdIndexBuild(cfg)
+	case "status":
+		err = cmdStatus(remaining)
+	case "step":
+		err = cmdStep(remaining)
+	case "pass":
+		err = cmdPass(remaining)
+	case "reject":
+		err = cmdReject(remaining)
+	case "next":
+		err = cmdNext(remaining)
+	case "complete":
+		err = cmdComplete(remaining)
+	case "reset":
+		err = cmdReset(remaining)
+	case "hook-stop":
+		err = cmdHookStop(remaining)
+	case "hook-session-start":
+		err = cmdHookSessionStart(remaining)
 	case "install":
 		cmdInstall()
-	case "help", "-h", "--help":
-		printUsage()
+	case "index":
+		err = cmdIndex(remaining)
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
+		fmt.Fprintf(os.Stderr, "unknown mode: %s\n", mode)
 		printUsage()
 		os.Exit(1)
 	}
@@ -599,20 +671,10 @@ func main() {
 	}
 }
 
-// shouldAutoStartDaemon determines if the daemon should be auto-started for the given command.
-func shouldAutoStartDaemon(cmd string, args []string) bool {
-	switch cmd {
-	case "run", "workflow", "test", "search", "status":
-		return true
-	case "index":
-		// Don't auto-start for "index daemon stop" or "index daemon --foreground"
-		if len(args) > 0 && args[0] == "daemon" {
-			if len(args) > 1 && args[1] == "stop" {
-				return false
-			}
-			// Don't auto-start when we're explicitly starting/checking the daemon
-			return false
-		}
+// shouldAutoStartDaemonForMode determines if the daemon should be auto-started for the given mode.
+func shouldAutoStartDaemonForMode(mode string) bool {
+	switch mode {
+	case "run", "workflow", "test", "reindex", "status":
 		return true
 	default:
 		return false
@@ -622,19 +684,20 @@ func shouldAutoStartDaemon(cmd string, args []string) bool {
 func printUsage() {
 	fmt.Println(`iter - Adversarial iterative implementation for Claude Code
 
-Usage: iter [command] [options]
-       iter --version
+Usage:
+  iter "<task>"                        Start iterative implementation (default mode)
+  iter -t:<file> <description>         Start test-driven iteration
+  iter -w:<file> <description>         Start workflow from markdown file
+  iter -r                              Rebuild code index
+  iter -v                              Show version
 
-Commands:
-  run "<task>"           Start iterative implementation until requirements/tests pass
-    --max-iterations N   Set maximum iterations (default 50)
-    --no-worktree        Disable git worktree isolation
-  workflow "<spec>"      Start workflow-based implementation
-    --max-iterations N   Set maximum iterations (default 50)
-    --no-worktree        Disable git worktree isolation
-  test <file> [tests...] Start test-driven iteration (never modifies tests)
-    --max-iterations N   Set maximum iterations (default 10)
-    --no-worktree        Disable git worktree isolation
+Examples:
+  iter "add health check endpoint"
+  iter -t:tests/docker/plugin_test.go check installation
+  iter -w:workflow.md include docker logs in results
+  iter -r
+
+Session Commands:
   status                 Show current session status
   step [N]               Show current/specific step instructions
   pass                   Record validation pass
@@ -642,31 +705,16 @@ Commands:
   next                   Move to next step
   complete               Mark session complete (merges worktree if active)
   reset                  Reset session state (cleans up worktree)
-  hook-stop              Stop hook handler (JSON output)
   install                Show installer for /iter shortcut skill
   help                   Show this help
 
-Options:
-  --version, -v          Show version
-
-Code Index Commands:
+Index Commands:
   index                  Show index status
   index build            Build/rebuild the full code index
   index clear            Clear and rebuild the index
-  index watch            Start file watcher for real-time indexing (blocking)
   index daemon           Start background daemon (auto-detaches)
   index daemon status    Check if daemon is running
   index daemon stop      Stop the daemon gracefully
-  search "<query>"       Search the code index
-    --kind=<type>        Filter by symbol type (function, method, type, const)
-    --path=<prefix>      Filter by file path prefix
-    --branch=<branch>    Filter by git branch
-    --limit=<n>          Maximum results (default 10)
-
-Index Daemon:
-  The index daemon runs as a persistent background process that watches
-  for file changes and keeps the code index updated in real-time.
-  It auto-starts when running: iter run, workflow, search, status, or index.
 
 The iter loop:
   1. ARCHITECT: Analyze requirements, create step documents
@@ -676,15 +724,11 @@ The iter loop:
 
 Git Worktree:
   By default, iter creates an isolated git worktree for each session.
-  This ensures changes don't affect your main branch until completion.
-  Use --no-worktree to disable this behavior.
-
-OS Detection:
-  iter automatically detects the operating system (Linux, macOS, Windows, WSL)
-  and provides environment-specific guidance to Claude.`)
+  This ensures changes don't affect your main branch until completion.`)
 }
 
 func cmdVersion() {
+	printBanner()
 	fmt.Printf("iter version %s\n", version)
 	fmt.Print(installerSnippet)
 }
@@ -753,8 +797,8 @@ func generateWorkdirPath(task, baseDir string) string {
 
 // cmdRun starts an iterative implementation session.
 func cmdRun(args []string) error {
-	if len(args) < 1 {
-		return fmt.Errorf("usage: iter run \"<task>\" [--max-iterations N] [--no-worktree]")
+	if len(args) < 1 || args[0] == "" {
+		return fmt.Errorf("usage: iter \"<task>\" [--max-iterations N] [--no-worktree]")
 	}
 
 	task := args[0]
@@ -1062,10 +1106,34 @@ Use 'iter complete' when workflow is done.
 	return nil
 }
 
+// cmdWorkflowFromFile starts a workflow from a markdown file.
+// This is the new unified syntax: iter -w:<file> <description>
+func cmdWorkflowFromFile(workflowFile, description string) error {
+	if workflowFile == "" {
+		return fmt.Errorf("usage: iter -w:<workflow-file> <description>")
+	}
+
+	// Read workflow specification from file
+	content, err := os.ReadFile(workflowFile)
+	if err != nil {
+		return fmt.Errorf("failed to read workflow file %s: %w", workflowFile, err)
+	}
+
+	spec := string(content)
+
+	// If description provided, prepend it to the spec
+	if description != "" {
+		spec = fmt.Sprintf("# Task\n%s\n\n# Workflow\n%s", description, spec)
+	}
+
+	// Call existing cmdWorkflow with the spec
+	return cmdWorkflow([]string{spec})
+}
+
 // cmdTest starts a test-driven iteration session with worktree isolation.
 func cmdTest(args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: iter test <test-file> [test-names...] [--max-iterations N] [--no-worktree]")
+		return fmt.Errorf("usage: iter -t:<test-file> [test-names...] [--max-iterations N] [--no-worktree]")
 	}
 
 	// Parse arguments: first arg is test file, remaining are test names
@@ -1758,10 +1826,10 @@ func cmdHookSessionStart(args []string) error {
 
 	skillContent := `---
 name: iter
-description: Run iter default workflow (wrapper for iter plugin). Use -v to show version.
+description: Adversarial iterative implementation. Use -v for version, -t:<file> for test mode, -w:<file> for workflow mode, -r to reindex, or just provide a task description.
 ---
 
-Execute the plugin skill ` + "`/iter:run`" + ` with the same arguments.
+Execute the plugin skill ` + "`/iter:iter`" + ` with the same arguments.
 
 Arguments:
 $ARGUMENTS

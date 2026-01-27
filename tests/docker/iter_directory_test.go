@@ -27,6 +27,10 @@ func TestIterDirectoryCreation(t *testing.T) {
 		t.Skip("ANTHROPIC_API_KEY required")
 	}
 
+	// Create result directory
+	resultDir := createTestResultDir(t, projectRoot, "iter-directory-creation")
+	defer resultDir.Close()
+
 	// Build Docker image (reuses if exists)
 	buildDockerImage(t, projectRoot)
 
@@ -113,16 +117,36 @@ func TestIterDirectoryCreation(t *testing.T) {
 	runCmd.Dir = projectRoot
 	output, err := runCmd.CombinedOutput()
 
+	// Write output to log file
+	resultDir.WriteLog(output)
+
 	t.Logf("Output:\n%s", output)
 
+	// Determine test result
+	status := "PASS"
+	var missing []string
 	outputStr := string(output)
 
 	// Check for success markers
 	if !strings.Contains(outputStr, ".iter directory creation test PASSED") {
-		t.Errorf(".iter directory creation test did not pass")
+		status = "FAIL"
+		missing = append(missing, ".iter directory creation test PASSED")
 	}
 
 	// Check no failures
+	if strings.Contains(outputStr, "FAIL:") {
+		status = "FAIL"
+		missing = append(missing, "no FAIL: markers in output")
+	}
+
+	// Write result summary
+	resultDir.WriteResult(status, missing)
+
+	// Report failures
+	if !strings.Contains(outputStr, ".iter directory creation test PASSED") {
+		t.Errorf(".iter directory creation test did not pass")
+	}
+
 	if strings.Contains(outputStr, "FAIL:") {
 		t.Errorf("Test reported failures in output")
 	}
@@ -152,6 +176,10 @@ func TestIterDirectoryRecreation(t *testing.T) {
 	if apiKey == "" {
 		t.Skip("ANTHROPIC_API_KEY required")
 	}
+
+	// Create result directory
+	resultDir := createTestResultDir(t, projectRoot, "iter-directory-recreation")
+	defer resultDir.Close()
 
 	// Build Docker image (reuses if exists)
 	buildDockerImage(t, projectRoot)
@@ -269,16 +297,52 @@ func TestIterDirectoryRecreation(t *testing.T) {
 	runCmd.Dir = projectRoot
 	output, err := runCmd.CombinedOutput()
 
+	// Write output to log file
+	resultDir.WriteLog(output)
+
 	t.Logf("Output:\n%s", output)
 
+	// Determine test result
+	status := "PASS"
+	var missing []string
 	outputStr := string(output)
 
 	// Check for success markers
 	if !strings.Contains(outputStr, ".iter directory recreation test PASSED") {
-		t.Errorf(".iter directory recreation test did not pass")
+		status = "FAIL"
+		missing = append(missing, ".iter directory recreation test PASSED")
 	}
 
 	// Check intermediate steps
+	if !strings.Contains(outputStr, "OK: .iter directory exists after first execution") {
+		status = "FAIL"
+		missing = append(missing, "OK: .iter directory exists after first execution")
+	}
+
+	if !strings.Contains(outputStr, "OK: .iter directory deleted successfully") {
+		status = "FAIL"
+		missing = append(missing, "OK: .iter directory deleted successfully")
+	}
+
+	if !strings.Contains(outputStr, "OK: .iter directory recreated") {
+		status = "FAIL"
+		missing = append(missing, "OK: .iter directory recreated")
+	}
+
+	// Check no failures
+	if strings.Contains(outputStr, "FAIL:") {
+		status = "FAIL"
+		missing = append(missing, "no FAIL: markers in output")
+	}
+
+	// Write result summary
+	resultDir.WriteResult(status, missing)
+
+	// Report failures
+	if !strings.Contains(outputStr, ".iter directory recreation test PASSED") {
+		t.Errorf(".iter directory recreation test did not pass")
+	}
+
 	if !strings.Contains(outputStr, "OK: .iter directory exists after first execution") {
 		t.Errorf("First execution did not create .iter directory")
 	}
@@ -291,7 +355,6 @@ func TestIterDirectoryRecreation(t *testing.T) {
 		t.Errorf("Second execution did not recreate .iter directory")
 	}
 
-	// Check no failures
 	if strings.Contains(outputStr, "FAIL:") {
 		t.Errorf("Test reported failures in output")
 	}

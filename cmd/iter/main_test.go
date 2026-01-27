@@ -318,12 +318,9 @@ func TestSkillsExist(t *testing.T) {
 	projectRoot := findTestProjectRoot(t)
 	skillsDir := filepath.Join(projectRoot, "skills")
 
+	// New unified structure: only "iter" (main skill) and "install" (wrapper installer)
 	expectedSkills := []string{
-		"workflow",
-		"index",
-		"search",
-		"test",
-		"run",
+		"iter",
 		"install",
 	}
 
@@ -332,6 +329,88 @@ func TestSkillsExist(t *testing.T) {
 		t.Run(skill, func(t *testing.T) {
 			if _, err := os.Stat(skillPath); os.IsNotExist(err) {
 				t.Errorf("expected skill not found: %s", skillPath)
+			}
+		})
+	}
+}
+
+// TestParseUnifiedArgs tests the new unified argument parsing
+func TestParseUnifiedArgs(t *testing.T) {
+	tests := []struct {
+		name        string
+		args        []string
+		wantMode    string
+		wantModeArg string
+		wantDesc    string
+	}{
+		{
+			name:     "version flag -v",
+			args:     []string{"-v"},
+			wantMode: "version",
+		},
+		{
+			name:     "version flag --version",
+			args:     []string{"--version"},
+			wantMode: "version",
+		},
+		{
+			name:     "help flag",
+			args:     []string{"-h"},
+			wantMode: "help",
+		},
+		{
+			name:     "reindex flag",
+			args:     []string{"-r"},
+			wantMode: "reindex",
+		},
+		{
+			name:        "test flag",
+			args:        []string{"-t:tests/foo_test.go", "check", "installation"},
+			wantMode:    "test",
+			wantModeArg: "tests/foo_test.go",
+			wantDesc:    "check installation",
+		},
+		{
+			name:        "workflow flag",
+			args:        []string{"-w:workflow.md", "include", "logs"},
+			wantMode:    "workflow",
+			wantModeArg: "workflow.md",
+			wantDesc:    "include logs",
+		},
+		{
+			name:     "run mode (default)",
+			args:     []string{"add health check endpoint"},
+			wantMode: "run",
+			wantDesc: "add health check endpoint",
+		},
+		{
+			name:     "internal command status",
+			args:     []string{"status"},
+			wantMode: "status",
+		},
+		{
+			name:     "internal command complete",
+			args:     []string{"complete"},
+			wantMode: "complete",
+		},
+		{
+			name:     "empty args",
+			args:     []string{},
+			wantMode: "help",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mode, modeArg, desc, _ := parseUnifiedArgs(tt.args)
+			if mode != tt.wantMode {
+				t.Errorf("mode = %q, want %q", mode, tt.wantMode)
+			}
+			if modeArg != tt.wantModeArg {
+				t.Errorf("modeArg = %q, want %q", modeArg, tt.wantModeArg)
+			}
+			if desc != tt.wantDesc {
+				t.Errorf("desc = %q, want %q", desc, tt.wantDesc)
 			}
 		})
 	}

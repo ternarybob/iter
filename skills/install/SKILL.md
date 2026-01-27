@@ -1,6 +1,6 @@
 ---
 name: install
-description: Install /iter shortcut skill. Creates a wrapper in ~/.claude/skills/iter so you can use /iter instead of /iter:run. Supports Linux, macOS, WSL, and Windows.
+description: Install /iter shortcut skill. Creates a wrapper in ~/.claude/skills/iter so you can use /iter instead of /iter:iter. Supports Linux, macOS, WSL, and Windows.
 allowed-tools: ["Bash", "Write"]
 ---
 
@@ -24,20 +24,20 @@ echo "Installing iter wrapper skill..."
 
 mkdir -p "$CLAUDE_DIR"
 
-cat << 'EOF' > "$CLAUDE_DIR/SKILL.md"
+cat << 'SKILLEOF' > "$CLAUDE_DIR/SKILL.md"
 ---
 name: iter
-description: Run iter default workflow (wrapper for iter plugin)
+description: Adversarial iterative implementation. Use -v for version, -t:<file> for test mode, -w:<file> for workflow mode, -r to reindex, or just provide a task description.
 ---
 
-Execute the plugin skill `/iter:run` with the same arguments.
+Execute the plugin skill `/iter:iter` with the same arguments.
 
 Arguments:
 $ARGUMENTS
-EOF
+SKILLEOF
 
 echo ""
-echo "✅ iter skill installed successfully"
+echo "iter skill installed successfully"
 echo ""
 echo "Restart Claude Code and use:"
 echo ""
@@ -58,22 +58,22 @@ Write-Host "Installing iter wrapper skill..."
 
 New-Item -ItemType Directory -Force -Path $ClaudeDir | Out-Null
 
-$skill = @"
+$skill = @'
 ---
 name: iter
-description: Run iter default workflow (wrapper for iter plugin)
+description: Adversarial iterative implementation. Use -v for version, -t:<file> for test mode, -w:<file> for workflow mode, -r to reindex, or just provide a task description.
 ---
 
-Execute the plugin skill ``/iter:run`` with the same arguments.
+Execute the plugin skill `/iter:iter` with the same arguments.
 
 Arguments:
-`$ARGUMENTS
-"@
+$ARGUMENTS
+'@
 
 $skill | Out-File -Encoding utf8 "$ClaudeDir\SKILL.md"
 
 Write-Host ""
-Write-Host "✅ iter skill installed successfully"
+Write-Host "iter skill installed successfully"
 Write-Host ""
 Write-Host "Restart Claude Code and use:"
 Write-Host ""
