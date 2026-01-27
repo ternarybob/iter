@@ -689,6 +689,11 @@ func cmdVersion() {
 	fmt.Print(installerSnippet)
 }
 
+// printBanner outputs a version banner for iter prompts.
+func printBanner() {
+	fmt.Printf("******************\niter v.%s\n******************\n\n", version)
+}
+
 // cmdInstall prints the installer snippet for setting up /iter shortcut.
 func cmdInstall() {
 	fmt.Println("iter - Adversarial iterative implementation")
@@ -859,7 +864,8 @@ On completion, changes will be merged back to '%s'.
 		worktreeLine = fmt.Sprintf("- Worktree: %s\n", state.WorktreePath)
 	}
 
-	// Output the full iterative implementation prompt
+	// Output banner and the full iterative implementation prompt
+	printBanner()
 	fmt.Printf(`# ITERATIVE IMPLEMENTATION
 
 ## Task
@@ -1012,6 +1018,7 @@ On completion, changes will be merged back to '%s'.
 		worktreeLine = fmt.Sprintf("- Worktree: %s\n", state.WorktreePath)
 	}
 
+	printBanner()
 	fmt.Printf(`# WORKFLOW EXECUTION
 %s
 %s
@@ -1180,7 +1187,8 @@ On completion, changes will be merged back to '%s' (no push to remote).
 		worktreeLine = fmt.Sprintf("- Worktree: %s\n", state.WorktreePath)
 	}
 
-	// Output the test session prompt
+	// Output banner and the test session prompt
+	printBanner()
 	fmt.Printf(`# TEST-DRIVEN ITERATION
 
 ## Test Target
@@ -1250,6 +1258,7 @@ func cmdStatus(args []string) error {
 
 	elapsed := time.Since(state.StartedAt).Round(time.Second)
 
+	printBanner()
 	fmt.Printf(`# Iter Session Status
 
 Task: %s
@@ -1302,6 +1311,7 @@ func cmdStep(args []string) error {
 	stepFile := filepath.Join(state.Workdir, fmt.Sprintf("step_%d.md", stepNum))
 	content, err := os.ReadFile(stepFile)
 
+	printBanner()
 	fmt.Printf(`# STEP %d IMPLEMENTATION
 
 %s
@@ -1838,6 +1848,7 @@ func cmdIndexStatus(cfg index.Config) error {
 		daemonStatus = fmt.Sprintf("running (PID %d)", daemonPID)
 	}
 
+	printBanner()
 	fmt.Printf(`# Code Index Status
 
 Documents: %d
@@ -2193,7 +2204,8 @@ func cmdSearch(args []string) error {
 		return fmt.Errorf("search: %w", err)
 	}
 
-	// Output formatted results
+	// Output banner and formatted results
+	printBanner()
 	fmt.Println(index.FormatResults(results))
 
 	return nil
