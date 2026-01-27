@@ -1,7 +1,7 @@
 // Package docker provides Docker-based integration tests for the iter plugin.
 //
 // Tests:
-//   - TestPluginInstallation - Full installation and /iter:run test
+//   - TestPluginInstallation - Full installation and /iter:iter test
 //   - TestIterRunCommandLine - Tests `claude -p '/iter:iter -v'`
 //   - TestIterRunInteractive - Tests `/iter:iter -v` in interactive session
 //   - TestPluginSkillAutoprompt - Tests skill discoverability
@@ -11,15 +11,16 @@
 //
 // Each test is independent and sets up its own Docker environment.
 //
-// # API Key Configuration
+// # Authentication Configuration
 //
-// Tests automatically load ANTHROPIC_API_KEY from:
-//  1. Environment variable ANTHROPIC_API_KEY
-//  2. tests/docker/.env file (format: ANTHROPIC_API_KEY=sk-...)
+// Tests support two authentication methods (in priority order):
+//
+// 1. API Key: Set ANTHROPIC_API_KEY environment variable or in tests/docker/.env
+// 2. Claude Max: Uses ~/.claude/.credentials.json OAuth token automatically
 //
 // # Running Tests
 //
-// Run all tests (API key loaded from .env):
+// Run all tests:
 //
 //	go test ./tests/docker/... -v -timeout 15m
 //
@@ -31,11 +32,16 @@
 //
 //	ANTHROPIC_API_KEY=sk-... go test ./tests/docker/... -v -timeout 15m
 //
+// Use Claude Max credentials (auto-detected from ~/.claude/.credentials.json):
+//
+//	go test ./tests/docker/... -v -timeout 15m
+//
 // Note: Tests can run in parallel or individually. Each test creates its own
 // timestamped results directory in tests/results/.
 package docker
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -97,6 +103,125 @@ func (r *TestResultDir) WriteResult(status string, missing []string) {
 }
 
 const dockerImage = "iter-plugin-test"
+
+// Package-level auth configuration (initialized by setupAuth)
+var (
+	globalAuthMode  AuthMode
+	globalAuthValue string
+	globalAuthInit  bool
+)
+
+// setupAuth initializes the global auth configuration once
+// This is called automatically by requireAuth
+func setupAuth(t *testing.T, projectRoot string) {
+	if globalAuthInit {
+		return
+	}
+	globalAuthMode, globalAuthValue = getAuthMode(t, projectRoot)
+	globalAuthInit = true
+}
+
+// requireAuth ensures auth is available and returns the docker args
+// This is the main function tests should use for auth setup
+func requireAuth(t *testing.T) []string {
+	t.Helper()
+
+	projectRoot := findProjectRoot(t)
+	setupAuth(t, projectRoot)
+
+	if globalAuthMode == AuthModeNone {
+		t.Skip("No authentication available (set ANTHROPIC_API_KEY, tests/docker/.env, or login with 'claude login' for Claude Max)")
+	}
+
+	return buildDockerRunArgs(t, globalAuthMode, globalAuthValue)
+}
+
+// requireDockerAndAuth is a convenience function that checks Docker availability
+// and returns the base docker run args with auth configured
+func requireDockerAndAuth(t *testing.T) []string {
+	t.Helper()
+
+	if testing.Short() {
+		t.Skip("skipping Docker integration test in short mode")
+	}
+
+	// Check Docker availability
+	dockerCheck := exec.Command("docker", "info")
+	if err := dockerCheck.Run(); err != nil {
+		t.Skip("Docker not available, skipping integration test")
+	}
+
+	return requireAuth(t)
+}
+
+// TestSetup contains all the common setup for Docker tests
+type TestSetup struct {
+	T           *testing.T
+	ProjectRoot string
+	BaseArgs    []string // Docker run base args with auth
+	ResultDir   *TestResultDir
+}
+
+// setupDockerTest performs all common test setup and returns a TestSetup
+// This is the main entry point for Docker tests
+func setupDockerTest(t *testing.T, testName string) *TestSetup {
+	t.Helper()
+
+	if testing.Short() {
+		t.Skip("skipping Docker integration test in short mode")
+	}
+
+	// Check Docker availability
+	dockerCheck := exec.Command("docker", "info")
+	if err := dockerCheck.Run(); err != nil {
+		t.Skip("Docker not available, skipping integration test")
+	}
+
+	projectRoot := findProjectRoot(t)
+
+	// Setup auth
+	setupAuth(t, projectRoot)
+	if globalAuthMode == AuthModeNone {
+		t.Skip("No authentication available (set ANTHROPIC_API_KEY, tests/docker/.env, or login with 'claude login' for Claude Max)")
+	}
+
+	// Create result directory
+	resultDir := createTestResultDir(t, projectRoot, testName)
+
+	// Build Docker image (reuses if exists)
+	buildDockerImage(t, projectRoot)
+
+	return &TestSetup{
+		T:           t,
+		ProjectRoot: projectRoot,
+		BaseArgs:    buildDockerRunArgs(t, globalAuthMode, globalAuthValue),
+		ResultDir:   resultDir,
+	}
+}
+
+// Close cleans up test resources
+func (s *TestSetup) Close() {
+	if s.ResultDir != nil {
+		s.ResultDir.Close()
+	}
+}
+
+// RunScript executes a shell script in Docker and returns the output
+func (s *TestSetup) RunScript(script string) (string, error) {
+	s.T.Helper()
+
+	args := append(s.BaseArgs, "--entrypoint", "bash", dockerImage, "-c", script)
+	runCmd := exec.Command("docker", args...)
+	runCmd.Dir = s.ProjectRoot
+
+	output, err := runCmd.CombinedOutput()
+
+	// Log output
+	s.ResultDir.WriteLog(output)
+	s.T.Logf("Output:\n%s", output)
+
+	return string(output), err
+}
 
 // pruneDocker cleans up Docker images and volumes before tests.
 // This ensures a clean environment for testing.
@@ -190,6 +315,113 @@ func loadAPIKey(t *testing.T, projectRoot string) string {
 	return ""
 }
 
+// getClaudeCredentialsPath returns the path to Claude credentials if they exist
+// This supports Claude Max subscription authentication
+func getClaudeCredentialsPath(t *testing.T) string {
+	t.Helper()
+
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+
+	credPath := filepath.Join(homeDir, ".claude", ".credentials.json")
+	if _, err := os.Stat(credPath); err == nil {
+		return filepath.Join(homeDir, ".claude")
+	}
+
+	return ""
+}
+
+// getOAuthToken extracts the OAuth token from Claude credentials file
+// Returns empty string if not found
+func getOAuthToken(t *testing.T, claudeDir string) string {
+	t.Helper()
+
+	credFile := filepath.Join(claudeDir, ".credentials.json")
+	data, err := os.ReadFile(credFile)
+	if err != nil {
+		return ""
+	}
+
+	// Parse JSON to extract claudeAiOauth.accessToken
+	var creds struct {
+		ClaudeAiOauth struct {
+			AccessToken string `json:"accessToken"`
+		} `json:"claudeAiOauth"`
+	}
+	if err := json.Unmarshal(data, &creds); err != nil {
+		return ""
+	}
+
+	return creds.ClaudeAiOauth.AccessToken
+}
+
+// AuthMode indicates how Docker tests should authenticate with Claude
+type AuthMode int
+
+const (
+	AuthModeNone AuthMode = iota
+	AuthModeAPIKey
+	AuthModeCredentials // Claude Max subscription
+)
+
+// getAuthMode determines which authentication method is available
+// Supports both API key and Claude Max subscription authentication
+// Set USE_CLAUDE_MAX=1 to prefer Claude Max subscription over API key
+func getAuthMode(t *testing.T, projectRoot string) (AuthMode, string) {
+	t.Helper()
+
+	// Check for Claude credentials first if USE_CLAUDE_MAX is set
+	if os.Getenv("USE_CLAUDE_MAX") != "" {
+		credPath := getClaudeCredentialsPath(t)
+		if credPath != "" {
+			t.Log("Using Claude Max credentials (USE_CLAUDE_MAX=1)")
+			return AuthModeCredentials, credPath
+		}
+	}
+
+	// Check for API key
+	apiKey := loadAPIKey(t, projectRoot)
+	if apiKey != "" {
+		return AuthModeAPIKey, apiKey
+	}
+
+	// Fall back to Claude credentials if available
+	credPath := getClaudeCredentialsPath(t)
+	if credPath != "" {
+		t.Log("Using Claude Max credentials")
+		return AuthModeCredentials, credPath
+	}
+
+	return AuthModeNone, ""
+}
+
+// buildDockerRunArgs builds the docker run arguments based on auth mode
+func buildDockerRunArgs(t *testing.T, authMode AuthMode, authValue string) []string {
+	t.Helper()
+
+	args := []string{"run", "--rm"}
+
+	switch authMode {
+	case AuthModeAPIKey:
+		t.Log("Using API key authentication")
+		args = append(args, "-e", "ANTHROPIC_API_KEY="+authValue)
+	case AuthModeCredentials:
+		t.Log("Using Claude Max credentials (CLAUDE_CODE_OAUTH_TOKEN)")
+		// Use CLAUDE_CODE_OAUTH_TOKEN environment variable for headless auth
+		// This is the recommended method for Docker/CI environments
+		token := getOAuthToken(t, authValue)
+		if token != "" {
+			args = append(args, "-e", "CLAUDE_CODE_OAUTH_TOKEN="+token)
+		} else {
+			t.Log("Warning: Could not extract OAuth token from credentials")
+		}
+	}
+
+	return args
+}
+
 // verifyIterDirectories checks that required .iter subdirectories exist in container output.
 // Returns a slice of missing directory names, or empty slice if all present.
 func verifyIterDirectories(t *testing.T, output string) []string {
@@ -220,8 +452,9 @@ type DockerTestConfig struct {
 	Timeout     time.Duration // optional, defaults to 5 minutes
 }
 
-// runDockerTest runs a test script in Docker with the API key automatically configured.
-// It handles common setup: Docker availability check, API key loading, image building.
+// runDockerTest runs a test script in Docker with authentication automatically configured.
+// It handles common setup: Docker availability check, auth loading, image building.
+// Supports both API key and Claude Max subscription authentication.
 // Returns the combined output and any error.
 func runDockerTest(t *testing.T, script string) (string, error) {
 	t.Helper()
@@ -232,23 +465,23 @@ func runDockerTest(t *testing.T, script string) (string, error) {
 		t.Skip("Docker not available, skipping integration test")
 	}
 
-	// Get project root and API key
+	// Get project root
 	projectRoot := findProjectRoot(t)
-	apiKey := loadAPIKey(t, projectRoot)
 
-	if apiKey == "" {
-		t.Skip("ANTHROPIC_API_KEY required (set env var or tests/docker/.env)")
+	// Determine authentication mode
+	authMode, authValue := getAuthMode(t, projectRoot)
+	if authMode == AuthModeNone {
+		t.Skip("No authentication available (set ANTHROPIC_API_KEY, tests/docker/.env, or login with 'claude login' for Claude Max)")
 	}
 
 	// Build Docker image (reuses if exists)
 	buildDockerImage(t, projectRoot)
 
-	// Run Docker container with script
-	runCmd := exec.Command("docker", "run", "--rm",
-		"-e", "ANTHROPIC_API_KEY="+apiKey,
-		"--entrypoint", "bash",
-		dockerImage,
-		"-c", script)
+	// Build docker run arguments based on auth mode
+	args := buildDockerRunArgs(t, authMode, authValue)
+	args = append(args, "--entrypoint", "bash", dockerImage, "-c", script)
+
+	runCmd := exec.Command("docker", args...)
 	runCmd.Dir = projectRoot
 
 	output, err := runCmd.CombinedOutput()
@@ -259,11 +492,13 @@ func runDockerTest(t *testing.T, script string) (string, error) {
 type DockerTestRunner struct {
 	T           *testing.T
 	ProjectRoot string
-	APIKey      string
+	AuthMode    AuthMode
+	AuthValue   string // API key or credentials path
 	ResultDir   *TestResultDir
 }
 
 // NewDockerTestRunner creates a new test runner with all setup done
+// Supports both API key and Claude Max subscription authentication
 func NewDockerTestRunner(t *testing.T, testName string) *DockerTestRunner {
 	t.Helper()
 
@@ -277,12 +512,13 @@ func NewDockerTestRunner(t *testing.T, testName string) *DockerTestRunner {
 		t.Skip("Docker not available, skipping integration test")
 	}
 
-	// Get project root and API key
+	// Get project root
 	projectRoot := findProjectRoot(t)
-	apiKey := loadAPIKey(t, projectRoot)
 
-	if apiKey == "" {
-		t.Skip("ANTHROPIC_API_KEY required (set env var or tests/docker/.env)")
+	// Determine authentication mode
+	authMode, authValue := getAuthMode(t, projectRoot)
+	if authMode == AuthModeNone {
+		t.Skip("No authentication available (set ANTHROPIC_API_KEY, tests/docker/.env, or login with 'claude login' for Claude Max)")
 	}
 
 	// Create result directory
@@ -294,7 +530,8 @@ func NewDockerTestRunner(t *testing.T, testName string) *DockerTestRunner {
 	return &DockerTestRunner{
 		T:           t,
 		ProjectRoot: projectRoot,
-		APIKey:      apiKey,
+		AuthMode:    authMode,
+		AuthValue:   authValue,
 		ResultDir:   resultDir,
 	}
 }
@@ -310,11 +547,11 @@ func (r *DockerTestRunner) Close() {
 func (r *DockerTestRunner) Run(script string) (string, error) {
 	r.T.Helper()
 
-	runCmd := exec.Command("docker", "run", "--rm",
-		"-e", "ANTHROPIC_API_KEY="+r.APIKey,
-		"--entrypoint", "bash",
-		dockerImage,
-		"-c", script)
+	// Build docker run arguments based on auth mode
+	args := buildDockerRunArgs(r.T, r.AuthMode, r.AuthValue)
+	args = append(args, "--entrypoint", "bash", dockerImage, "-c", script)
+
+	runCmd := exec.Command("docker", args...)
 	runCmd.Dir = r.ProjectRoot
 
 	output, err := runCmd.CombinedOutput()

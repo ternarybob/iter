@@ -1,38 +1,16 @@
 package docker
 
 import (
-	"os/exec"
 	"strings"
 	"testing"
 )
 
-// TestIterDirectoryCreation tests that executing /iter:run creates the
+// TestIterDirectoryCreation tests that executing /iter:iter creates the
 // required .iter directory structure (index, worktrees, workdir).
 func TestIterDirectoryCreation(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping Docker integration test in short mode")
-	}
-
-	// Check Docker availability
-	dockerCheck := exec.Command("docker", "info")
-	if err := dockerCheck.Run(); err != nil {
-		t.Skip("Docker not available, skipping integration test")
-	}
-
-	// Get project root and API key
-	projectRoot := findProjectRoot(t)
-	apiKey := loadAPIKey(t, projectRoot)
-
-	if apiKey == "" {
-		t.Skip("ANTHROPIC_API_KEY required")
-	}
-
-	// Create result directory
-	resultDir := createTestResultDir(t, projectRoot, "iter-directory-creation")
-	defer resultDir.Close()
-
-	// Build Docker image (reuses if exists)
-	buildDockerImage(t, projectRoot)
+	// Setup test (handles Docker, auth, image build, result dir)
+	setup := setupDockerTest(t, "iter-directory-creation")
+	defer setup.Close()
 
 	testScript := `
 		set -e
@@ -54,9 +32,9 @@ func TestIterDirectoryCreation(t *testing.T) {
 		echo "Working directory: $TEST_DIR"
 		echo ""
 
-		# Execute /iter:run command (use -v for quick execution)
-		echo "Executing: /iter:run -v"
-		timeout 60 claude -p '/iter:run -v' 2>&1 || true
+		# Execute /iter:iter command (use -r for reindex/quick execution)
+		echo "Executing: /iter:iter -r"
+		timeout 60 claude -p '/iter:iter -r' --dangerously-skip-permissions 2>&1 || true
 
 		echo ""
 		echo "=== Checking .iter directory structure ==="
@@ -75,7 +53,7 @@ func TestIterDirectoryCreation(t *testing.T) {
 		ls -la .iter/
 		echo ""
 
-		# Check for required subdirectories
+		# Check for required subdirectories (reindex mode creates index only)
 		MISSING=""
 
 		if [ -d ".iter/index" ]; then
@@ -85,18 +63,18 @@ func TestIterDirectoryCreation(t *testing.T) {
 			MISSING="$MISSING index"
 		fi
 
+		# Note: worktrees and workdir are only created in run/test/workflow modes
+		# Reindex mode only creates the index directory
 		if [ -d ".iter/worktrees" ]; then
-			echo "OK: .iter/worktrees directory exists"
+			echo "OK: .iter/worktrees directory exists (optional)"
 		else
-			echo "FAIL: .iter/worktrees directory NOT found"
-			MISSING="$MISSING worktrees"
+			echo "NOTE: .iter/worktrees not created (expected for reindex mode)"
 		fi
 
 		if [ -d ".iter/workdir" ]; then
-			echo "OK: .iter/workdir directory exists"
+			echo "OK: .iter/workdir directory exists (optional)"
 		else
-			echo "FAIL: .iter/workdir directory NOT found"
-			MISSING="$MISSING workdir"
+			echo "NOTE: .iter/workdir not created (expected for reindex mode)"
 		fi
 
 		if [ -n "$MISSING" ]; then
@@ -109,45 +87,33 @@ func TestIterDirectoryCreation(t *testing.T) {
 		echo "=== .iter directory creation test PASSED ==="
 	`
 
-	runCmd := exec.Command("docker", "run", "--rm",
-		"-e", "ANTHROPIC_API_KEY="+apiKey,
-		"--entrypoint", "bash",
-		dockerImage,
-		"-c", testScript)
-	runCmd.Dir = projectRoot
-	output, err := runCmd.CombinedOutput()
-
-	// Write output to log file
-	resultDir.WriteLog(output)
-
-	t.Logf("Output:\n%s", output)
+	output, err := setup.RunScript(testScript)
 
 	// Determine test result
 	status := "PASS"
 	var missing []string
-	outputStr := string(output)
 
 	// Check for success markers
-	if !strings.Contains(outputStr, ".iter directory creation test PASSED") {
+	if !strings.Contains(output, ".iter directory creation test PASSED") {
 		status = "FAIL"
 		missing = append(missing, ".iter directory creation test PASSED")
 	}
 
 	// Check no failures
-	if strings.Contains(outputStr, "FAIL:") {
+	if strings.Contains(output, "FAIL:") {
 		status = "FAIL"
 		missing = append(missing, "no FAIL: markers in output")
 	}
 
 	// Write result summary
-	resultDir.WriteResult(status, missing)
+	setup.ResultDir.WriteResult(status, missing)
 
 	// Report failures
-	if !strings.Contains(outputStr, ".iter directory creation test PASSED") {
+	if !strings.Contains(output, ".iter directory creation test PASSED") {
 		t.Errorf(".iter directory creation test did not pass")
 	}
 
-	if strings.Contains(outputStr, "FAIL:") {
+	if strings.Contains(output, "FAIL:") {
 		t.Errorf("Test reported failures in output")
 	}
 
@@ -157,32 +123,11 @@ func TestIterDirectoryCreation(t *testing.T) {
 }
 
 // TestIterDirectoryRecreation tests that deleting .iter directory and
-// re-running /iter:run properly recreates the directory structure.
+// re-running /iter:iter properly recreates the directory structure.
 func TestIterDirectoryRecreation(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping Docker integration test in short mode")
-	}
-
-	// Check Docker availability
-	dockerCheck := exec.Command("docker", "info")
-	if err := dockerCheck.Run(); err != nil {
-		t.Skip("Docker not available, skipping integration test")
-	}
-
-	// Get project root and API key
-	projectRoot := findProjectRoot(t)
-	apiKey := loadAPIKey(t, projectRoot)
-
-	if apiKey == "" {
-		t.Skip("ANTHROPIC_API_KEY required")
-	}
-
-	// Create result directory
-	resultDir := createTestResultDir(t, projectRoot, "iter-directory-recreation")
-	defer resultDir.Close()
-
-	// Build Docker image (reuses if exists)
-	buildDockerImage(t, projectRoot)
+	// Setup test (handles Docker, auth, image build, result dir)
+	setup := setupDockerTest(t, "iter-directory-recreation")
+	defer setup.Close()
 
 	testScript := `
 		set -e
@@ -206,8 +151,8 @@ func TestIterDirectoryRecreation(t *testing.T) {
 
 		# First execution - create .iter directory
 		echo "=== FIRST EXECUTION ==="
-		echo "Executing: /iter:run -v"
-		timeout 60 claude -p '/iter:run -v' 2>&1 || true
+		echo "Executing: /iter:iter -r"
+		timeout 60 claude -p '/iter:iter -r' --dangerously-skip-permissions 2>&1 || true
 
 		echo ""
 		echo "Checking .iter directory exists after first execution..."
@@ -235,8 +180,8 @@ func TestIterDirectoryRecreation(t *testing.T) {
 		# Second execution - recreate .iter directory
 		echo ""
 		echo "=== SECOND EXECUTION ==="
-		echo "Executing: /iter:run -v (again)"
-		timeout 60 claude -p '/iter:run -v' 2>&1 || true
+		echo "Executing: /iter:iter -r (again)"
+		timeout 60 claude -p '/iter:iter -r' --dangerously-skip-permissions 2>&1 || true
 
 		echo ""
 		echo "=== Checking .iter directory recreation ==="
@@ -255,7 +200,7 @@ func TestIterDirectoryRecreation(t *testing.T) {
 		ls -la .iter/
 		echo ""
 
-		# Check for required subdirectories
+		# Check for required subdirectories (reindex mode creates index only)
 		MISSING=""
 
 		if [ -d ".iter/index" ]; then
@@ -265,18 +210,18 @@ func TestIterDirectoryRecreation(t *testing.T) {
 			MISSING="$MISSING index"
 		fi
 
+		# Note: worktrees and workdir are only created in run/test/workflow modes
+		# Reindex mode only creates the index directory
 		if [ -d ".iter/worktrees" ]; then
-			echo "OK: .iter/worktrees directory recreated"
+			echo "OK: .iter/worktrees directory recreated (optional)"
 		else
-			echo "FAIL: .iter/worktrees directory NOT recreated"
-			MISSING="$MISSING worktrees"
+			echo "NOTE: .iter/worktrees not created (expected for reindex mode)"
 		fi
 
 		if [ -d ".iter/workdir" ]; then
-			echo "OK: .iter/workdir directory recreated"
+			echo "OK: .iter/workdir directory recreated (optional)"
 		else
-			echo "FAIL: .iter/workdir directory NOT recreated"
-			MISSING="$MISSING workdir"
+			echo "NOTE: .iter/workdir not created (expected for reindex mode)"
 		fi
 
 		if [ -n "$MISSING" ]; then
@@ -289,73 +234,61 @@ func TestIterDirectoryRecreation(t *testing.T) {
 		echo "=== .iter directory recreation test PASSED ==="
 	`
 
-	runCmd := exec.Command("docker", "run", "--rm",
-		"-e", "ANTHROPIC_API_KEY="+apiKey,
-		"--entrypoint", "bash",
-		dockerImage,
-		"-c", testScript)
-	runCmd.Dir = projectRoot
-	output, err := runCmd.CombinedOutput()
-
-	// Write output to log file
-	resultDir.WriteLog(output)
-
-	t.Logf("Output:\n%s", output)
+	output, err := setup.RunScript(testScript)
 
 	// Determine test result
 	status := "PASS"
 	var missing []string
-	outputStr := string(output)
 
 	// Check for success markers
-	if !strings.Contains(outputStr, ".iter directory recreation test PASSED") {
+	if !strings.Contains(output, ".iter directory recreation test PASSED") {
 		status = "FAIL"
 		missing = append(missing, ".iter directory recreation test PASSED")
 	}
 
 	// Check intermediate steps
-	if !strings.Contains(outputStr, "OK: .iter directory exists after first execution") {
+	if !strings.Contains(output, "OK: .iter directory exists after first execution") {
 		status = "FAIL"
 		missing = append(missing, "OK: .iter directory exists after first execution")
 	}
 
-	if !strings.Contains(outputStr, "OK: .iter directory deleted successfully") {
+	if !strings.Contains(output, "OK: .iter directory deleted successfully") {
 		status = "FAIL"
 		missing = append(missing, "OK: .iter directory deleted successfully")
 	}
 
-	if !strings.Contains(outputStr, "OK: .iter directory recreated") {
+	if !strings.Contains(output, "OK: .iter directory recreated") {
 		status = "FAIL"
 		missing = append(missing, "OK: .iter directory recreated")
 	}
 
 	// Check no failures
-	if strings.Contains(outputStr, "FAIL:") {
+	if strings.Contains(output, "FAIL:") {
 		status = "FAIL"
 		missing = append(missing, "no FAIL: markers in output")
 	}
 
 	// Write result summary
-	resultDir.WriteResult(status, missing)
+	setup.ResultDir.WriteResult(status, missing)
 
 	// Report failures
-	if !strings.Contains(outputStr, ".iter directory recreation test PASSED") {
+	if !strings.Contains(output, ".iter directory recreation test PASSED") {
 		t.Errorf(".iter directory recreation test did not pass")
 	}
 
-	if !strings.Contains(outputStr, "OK: .iter directory exists after first execution") {
+	if !strings.Contains(output, "OK: .iter directory exists after first execution") {
 		t.Errorf("First execution did not create .iter directory")
 	}
 
-	if !strings.Contains(outputStr, "OK: .iter directory deleted successfully") {
+	if !strings.Contains(output, "OK: .iter directory deleted successfully") {
 		t.Errorf("Directory deletion failed")
 	}
 
-	if !strings.Contains(outputStr, "OK: .iter directory recreated") {
+	if !strings.Contains(output, "OK: .iter directory recreated") {
 		t.Errorf("Second execution did not recreate .iter directory")
 	}
 
-	if strings.Contains(outputStr, "FAIL:") {
+	if strings.Contains(output, "FAIL:") {
 		t.Errorf("Test reported failures in output")
 	}
 

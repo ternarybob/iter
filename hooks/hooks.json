@@ -10,6 +10,19 @@
         ]
       }
     ],
+    "PreToolUse": [
+      {
+        "matcher": {
+          "tool_name": "Skill"
+        },
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/iter hook-pre-tool-use"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [

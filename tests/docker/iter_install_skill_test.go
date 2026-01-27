@@ -1,7 +1,6 @@
 package docker
 
 import (
-	"os/exec"
 	"strings"
 	"testing"
 )
@@ -14,36 +13,10 @@ import (
 // This is distinct from TestPluginInstallation which tests the plugin's skills
 // directly (/iter:iter). This test verifies the wrapper installation flow.
 func TestIterInstallSkill(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping Docker integration test in short mode")
-	}
+	// Setup test (handles Docker, auth, image build, result dir)
+	setup := setupDockerTest(t, "iter-install-skill")
+	defer setup.Close()
 
-	// Check Docker availability
-	dockerCheck := exec.Command("docker", "info")
-	if err := dockerCheck.Run(); err != nil {
-		t.Skip("Docker not available, skipping integration test")
-	}
-
-	// Get project root and API key
-	projectRoot := findProjectRoot(t)
-	apiKey := loadAPIKey(t, projectRoot)
-
-	if apiKey == "" {
-		t.Skip("ANTHROPIC_API_KEY required")
-	}
-
-	// Create result directory
-	resultDir := createTestResultDir(t, projectRoot, "iter-install-skill")
-	defer resultDir.Close()
-
-	// Build Docker image (reuses if exists)
-	buildDockerImage(t, projectRoot)
-
-	// Test script that:
-	// 1. Installs the iter plugin
-	// 2. Runs /iter:install to create the wrapper
-	// 3. Verifies /iter command is available (autocomplete)
-	// 4. Verifies /iter -v executes successfully
 	testScript := `
 set -e
 
@@ -205,49 +178,38 @@ else
 fi
 `
 
-	runCmd := exec.Command("docker", "run", "--rm",
-		"-e", "ANTHROPIC_API_KEY="+apiKey,
-		"--entrypoint", "bash",
-		dockerImage,
-		"-c", testScript)
-	runCmd.Dir = projectRoot
-	output, err := runCmd.CombinedOutput()
-
-	// Write output to log file
-	resultDir.WriteLog(output)
-
-	t.Logf("Output:\n%s", output)
+	// Run the test
+	output, err := setup.RunScript(testScript)
 
 	// Determine test result
 	status := "PASS"
 	var missing []string
-	outputStr := string(output)
 
 	// Check for wrapper installation
-	if !strings.Contains(outputStr, "OK: /iter wrapper skill installed correctly") {
+	if !strings.Contains(output, "OK: /iter wrapper skill installed correctly") {
 		status = "FAIL"
 		missing = append(missing, "/iter wrapper skill installed correctly")
 	}
 
 	// Check for /iter -v execution (multiple possible success messages)
-	if !strings.Contains(outputStr, "OK: /iter -v executed") {
+	if !strings.Contains(output, "OK: /iter -v executed") {
 		status = "FAIL"
 		missing = append(missing, "/iter -v executed successfully")
 	}
 
 	// Check for overall success
-	if !strings.Contains(outputStr, "ALL TESTS PASSED") {
+	if !strings.Contains(output, "ALL TESTS PASSED") {
 		status = "FAIL"
 	}
 
 	// Check for Unknown skill error (critical failure)
-	if strings.Contains(outputStr, "Unknown skill") {
+	if strings.Contains(output, "Unknown skill") {
 		status = "FAIL"
 		missing = append(missing, "/iter skill recognized (no Unknown skill error)")
 	}
 
 	// Write result summary
-	resultDir.WriteResult(status, missing)
+	setup.ResultDir.WriteResult(status, missing)
 
 	// Report failures
 	if err != nil {

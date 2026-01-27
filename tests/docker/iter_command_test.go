@@ -19,13 +19,9 @@ func TestIterRunCommandLine(t *testing.T) {
 		t.Skip("Docker not available, skipping integration test")
 	}
 
-	// Get project root and API key
+	// Setup: require Docker and auth
+	baseArgs := requireDockerAndAuth(t)
 	projectRoot := findProjectRoot(t)
-	apiKey := loadAPIKey(t, projectRoot)
-
-	if apiKey == "" {
-		t.Skip("ANTHROPIC_API_KEY required")
-	}
 
 	// Create result directory
 	resultDir := createTestResultDir(t, projectRoot, "iter-run-command-line")
@@ -35,16 +31,13 @@ func TestIterRunCommandLine(t *testing.T) {
 	buildDockerImage(t, projectRoot)
 
 	// Run just the command line test - now uses /iter:iter -v (unified skill)
-	runCmd := exec.Command("docker", "run", "--rm",
-		"-e", "ANTHROPIC_API_KEY="+apiKey,
-		"--entrypoint", "bash",
-		dockerImage,
-		"-c", `
+	args := append(baseArgs, "--entrypoint", "bash", dockerImage, "-c", `
 			claude plugin marketplace add /home/testuser/iter-plugin
 			claude plugin install iter@iter-local
 			cd /tmp && git init -q && git config user.email "test@test.com" && git config user.name "Test"
 			claude -p '/iter:iter -v'
 		`)
+	runCmd := exec.Command("docker", args...)
 	runCmd.Dir = projectRoot
 	output, err := runCmd.CombinedOutput()
 
@@ -63,8 +56,13 @@ func TestIterRunCommandLine(t *testing.T) {
 		missing = append(missing, "command execution succeeded")
 	}
 
-	if !strings.Contains(outputStr, "iter version") && !strings.Contains(outputStr, "ITERATIVE IMPLEMENTATION") &&
-		!strings.Contains(outputStr, "2.") {
+	// Check for version output (Claude may format with markdown like "Version: **dev**")
+	hasVersionOutput := strings.Contains(outputStr, "iter version") ||
+		strings.Contains(outputStr, "ITERATIVE IMPLEMENTATION") ||
+		strings.Contains(outputStr, "Version:") ||
+		strings.Contains(outputStr, "VERSION MODE") ||
+		strings.Contains(outputStr, "2.")
+	if !hasVersionOutput {
 		status = "FAIL"
 		missing = append(missing, "iter version output")
 	}
@@ -96,13 +94,9 @@ func TestIterRunInteractive(t *testing.T) {
 		t.Skip("Docker not available, skipping integration test")
 	}
 
-	// Get project root and API key
+	// Setup: require Docker and auth
+	baseArgs := requireDockerAndAuth(t)
 	projectRoot := findProjectRoot(t)
-	apiKey := loadAPIKey(t, projectRoot)
-
-	if apiKey == "" {
-		t.Skip("ANTHROPIC_API_KEY required")
-	}
 
 	// Create result directory
 	resultDir := createTestResultDir(t, projectRoot, "iter-run-interactive")
@@ -112,16 +106,13 @@ func TestIterRunInteractive(t *testing.T) {
 	buildDockerImage(t, projectRoot)
 
 	// Run interactive test - now uses /iter:iter -v (unified skill)
-	runCmd := exec.Command("docker", "run", "--rm",
-		"-e", "ANTHROPIC_API_KEY="+apiKey,
-		"--entrypoint", "bash",
-		dockerImage,
-		"-c", `
+	args := append(baseArgs, "--entrypoint", "bash", dockerImage, "-c", `
 			claude plugin marketplace add /home/testuser/iter-plugin
 			claude plugin install iter@iter-local
 			cd /tmp && git init -q && git config user.email "test@test.com" && git config user.name "Test"
 			echo "/iter:iter -v" | claude --dangerously-skip-permissions
 		`)
+	runCmd := exec.Command("docker", args...)
 	runCmd.Dir = projectRoot
 	output, err := runCmd.CombinedOutput()
 
@@ -140,8 +131,13 @@ func TestIterRunInteractive(t *testing.T) {
 		missing = append(missing, "command execution succeeded")
 	}
 
-	if !strings.Contains(outputStr, "iter version") && !strings.Contains(outputStr, "ITERATIVE IMPLEMENTATION") &&
-		!strings.Contains(outputStr, "2.") {
+	// Check for version output (Claude may format with markdown like "Version: **dev**")
+	hasVersionOutput := strings.Contains(outputStr, "iter version") ||
+		strings.Contains(outputStr, "ITERATIVE IMPLEMENTATION") ||
+		strings.Contains(outputStr, "Version:") ||
+		strings.Contains(outputStr, "VERSION MODE") ||
+		strings.Contains(outputStr, "2.")
+	if !hasVersionOutput {
 		status = "FAIL"
 		missing = append(missing, "iter version output")
 	}
@@ -173,13 +169,9 @@ func TestIterSkillsDiscovery(t *testing.T) {
 		t.Skip("Docker not available, skipping integration test")
 	}
 
-	// Get project root and API key
+	// Setup: require Docker and auth
+	baseArgs := requireDockerAndAuth(t)
 	projectRoot := findProjectRoot(t)
-	apiKey := loadAPIKey(t, projectRoot)
-
-	if apiKey == "" {
-		t.Skip("ANTHROPIC_API_KEY required")
-	}
 
 	// Create result directory
 	resultDir := createTestResultDir(t, projectRoot, "iter-skills-discovery")
@@ -216,11 +208,8 @@ func TestIterSkillsDiscovery(t *testing.T) {
 		echo "=== All skills tested ==="
 	`
 
-	runCmd := exec.Command("docker", "run", "--rm",
-		"-e", "ANTHROPIC_API_KEY="+apiKey,
-		"--entrypoint", "bash",
-		dockerImage,
-		"-c", testScript)
+	args := append(baseArgs, "--entrypoint", "bash", dockerImage, "-c", testScript)
+	runCmd := exec.Command("docker", args...)
 	runCmd.Dir = projectRoot
 	output, err := runCmd.CombinedOutput()
 
@@ -307,13 +296,9 @@ func TestIterSkillsAutocomplete(t *testing.T) {
 		t.Skip("Docker not available, skipping integration test")
 	}
 
-	// Get project root and API key
+	// Setup: require Docker and auth
+	baseArgs := requireDockerAndAuth(t)
 	projectRoot := findProjectRoot(t)
-	apiKey := loadAPIKey(t, projectRoot)
-
-	if apiKey == "" {
-		t.Skip("ANTHROPIC_API_KEY required")
-	}
 
 	// Create result directory
 	resultDir := createTestResultDir(t, projectRoot, "iter-skills-autocomplete")
@@ -429,11 +414,8 @@ func TestIterSkillsAutocomplete(t *testing.T) {
 		echo "Skills have correct SKILL.md structure and can be invoked."
 	`
 
-	runCmd := exec.Command("docker", "run", "--rm",
-		"-e", "ANTHROPIC_API_KEY="+apiKey,
-		"--entrypoint", "bash",
-		dockerImage,
-		"-c", testScript)
+	args := append(baseArgs, "--entrypoint", "bash", dockerImage, "-c", testScript)
+	runCmd := exec.Command("docker", args...)
 	runCmd.Dir = projectRoot
 	output, err := runCmd.CombinedOutput()
 
@@ -513,13 +495,9 @@ func TestPluginSkillAutoprompt(t *testing.T) {
 		t.Skip("Docker not available, skipping integration test")
 	}
 
-	// Get project root and API key
+	// Setup: require Docker and auth
+	baseArgs := requireDockerAndAuth(t)
 	projectRoot := findProjectRoot(t)
-	apiKey := loadAPIKey(t, projectRoot)
-
-	if apiKey == "" {
-		t.Skip("ANTHROPIC_API_KEY required")
-	}
 
 	// Create result directory
 	resultDir := createTestResultDir(t, projectRoot, "plugin-skill-autoprompt")
@@ -602,9 +580,9 @@ func TestPluginSkillAutoprompt(t *testing.T) {
 		echo "=== Testing skill execution ==="
 
 		# Test /iter:iter -v specifically
-		# Claude may format version with markdown like "version **2.1.xxx**"
+		# Claude may format version with markdown like "version **2.1.xxx**" or "version dev"
 		OUTPUT=$(timeout 60 claude -p "/iter:iter -v" 2>&1)
-		if echo "$OUTPUT" | grep -qE "(iter version|ITERATIVE|version.*[0-9]+\.[0-9]+\.[0-9]+|2\.[0-9]+\.[0-9]+-[0-9]+)"; then
+		if echo "$OUTPUT" | grep -qiE "(iter version|ITERATIVE|VERSION MODE|version.*(dev|[0-9]+)|v\.dev|v\.[0-9])"; then
 			echo "OK: /iter:iter -v executes correctly"
 		else
 			echo "FAIL: /iter:iter -v did not execute correctly"
@@ -616,11 +594,8 @@ func TestPluginSkillAutoprompt(t *testing.T) {
 		echo "=== All skill autoprompt tests passed ==="
 	`
 
-	runCmd := exec.Command("docker", "run", "--rm",
-		"-e", "ANTHROPIC_API_KEY="+apiKey,
-		"--entrypoint", "bash",
-		dockerImage,
-		"-c", testScript)
+	args := append(baseArgs, "--entrypoint", "bash", dockerImage, "-c", testScript)
+	runCmd := exec.Command("docker", args...)
 	runCmd.Dir = projectRoot
 	output, err := runCmd.CombinedOutput()
 

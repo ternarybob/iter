@@ -1,7 +1,6 @@
 package docker
 
 import (
-	"os/exec"
 	"strings"
 	"testing"
 )
@@ -10,30 +9,9 @@ import (
 // This verifies that the unified /iter:iter skill (for run/test/workflow modes) and /iter:install
 // are properly registered and appear as available skills in Claude Code.
 func TestSkillsDiscovery(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping Docker integration test in short mode")
-	}
-
-	// Check Docker availability
-	dockerCheck := exec.Command("docker", "info")
-	if err := dockerCheck.Run(); err != nil {
-		t.Skip("Docker not available, skipping integration test")
-	}
-
-	// Get project root and API key
-	projectRoot := findProjectRoot(t)
-	apiKey := loadAPIKey(t, projectRoot)
-
-	if apiKey == "" {
-		t.Skip("ANTHROPIC_API_KEY required")
-	}
-
-	// Create result directory
-	resultDir := createTestResultDir(t, projectRoot, "skills-discovery")
-	defer resultDir.Close()
-
-	// Build Docker image (reuses if exists)
-	buildDockerImage(t, projectRoot)
+	// Setup test (handles Docker, auth, image build, result dir)
+	setup := setupDockerTest(t, "skills-discovery")
+	defer setup.Close()
 
 	// Test script that verifies skills are discoverable with new unified syntax
 	testScript := `
@@ -105,7 +83,7 @@ func TestSkillsDiscovery(t *testing.T) {
 
 		# Run /iter:install to create the wrapper skill
 		echo "Running /iter:install..."
-		INSTALL_OUTPUT=$(timeout 120 claude -p "/iter:install" 2>&1 || true)
+		INSTALL_OUTPUT=$(timeout 120 claude -p "/iter:install" --dangerously-skip-permissions 2>&1 || true)
 		echo "Install output:"
 		echo "$INSTALL_OUTPUT"
 
@@ -126,17 +104,17 @@ func TestSkillsDiscovery(t *testing.T) {
 
 		# Test the unified iter skill with -v flag
 		echo "Testing /iter:iter -v (version)..."
-		OUTPUT=$(timeout 90 claude -p "/iter:iter -v" --output-format json 2>&1)
+		OUTPUT=$(timeout 90 claude -p "/iter:iter -v" --dangerously-skip-permissions --output-format json 2>&1)
 		echo "JSON output: $OUTPUT"
 
 		# Extract result from JSON
 		RESULT=$(echo "$OUTPUT" | jq -r '.result // ""' 2>/dev/null || echo "$OUTPUT")
 		echo "Parsed result: $RESULT"
 
-		if echo "$RESULT" | grep -qiE "(iter version|version.*[0-9]+\.[0-9]+)"; then
+		if echo "$RESULT" | grep -qiE "(iter version|version.*[0-9]+\.[0-9]+|VERSION MODE)"; then
 			echo "OK: /iter:iter -v shows version"
 		else
-			if echo "$OUTPUT" | grep -qiE "(iter version|version.*[0-9]+\.[0-9]+)"; then
+			if echo "$OUTPUT" | grep -qiE "(iter version|version.*[0-9]+\.[0-9]+|VERSION MODE)"; then
 				echo "OK: /iter:iter -v shows version (in raw output)"
 			else
 				echo "FAIL: /iter:iter -v did not show version"
@@ -151,7 +129,7 @@ func TestSkillsDiscovery(t *testing.T) {
 
 		# Test -r (reindex) mode
 		echo "Testing /iter:iter -r (reindex)..."
-		OUTPUT=$(timeout 90 claude -p "/iter:iter -r" --output-format json 2>&1)
+		OUTPUT=$(timeout 90 claude -p "/iter:iter -r" --dangerously-skip-permissions --output-format json 2>&1)
 		RESULT=$(echo "$OUTPUT" | jq -r '.result // ""' 2>/dev/null || echo "$OUTPUT")
 		if echo "$RESULT" | grep -qiE "(index|indexed|building)"; then
 			echo "OK: /iter:iter -r triggers reindex"
@@ -169,7 +147,7 @@ func TestSkillsDiscovery(t *testing.T) {
 		echo "=== Testing skill autocomplete listing ==="
 		echo "Asking Claude to list available /iter skills..."
 
-		OUTPUT=$(timeout 90 claude -p "List all available skills that start with /iter (include both /iter and /iter:* skills). Just list the skill names, nothing else." 2>&1)
+		OUTPUT=$(timeout 90 claude -p "List all available skills that start with /iter (include both /iter and /iter:* skills). Just list the skill names, nothing else." --dangerously-skip-permissions 2>&1)
 		echo "Claude skill listing output:"
 		echo "$OUTPUT"
 
@@ -196,38 +174,26 @@ func TestSkillsDiscovery(t *testing.T) {
 		echo "=== All skills discovery tests passed ==="
 	`
 
-	runCmd := exec.Command("docker", "run", "--rm",
-		"-e", "ANTHROPIC_API_KEY="+apiKey,
-		"--entrypoint", "bash",
-		dockerImage,
-		"-c", testScript)
-	runCmd.Dir = projectRoot
-	output, err := runCmd.CombinedOutput()
-
-	// Write output to log file
-	resultDir.WriteLog(output)
-
-	t.Logf("Output:\n%s", output)
+	output, err := setup.RunScript(testScript)
 
 	// Determine test result
 	status := "PASS"
 	var missing []string
-	outputStr := string(output)
 
 	// Check for test success markers
-	if !strings.Contains(outputStr, "All skills discovery tests passed") {
+	if !strings.Contains(output, "All skills discovery tests passed") {
 		status = "FAIL"
 		missing = append(missing, "All skills discovery tests passed")
 	}
 
 	// Check no skills had "Unknown skill" errors
-	if strings.Contains(outputStr, "Unknown skill") {
+	if strings.Contains(output, "Unknown skill") {
 		status = "FAIL"
 		missing = append(missing, "no Unknown skill errors")
 	}
 
 	// Check wrapper skill was created by /iter:install
-	if !strings.Contains(outputStr, "Wrapper skill created at") {
+	if !strings.Contains(output, "Wrapper skill created at") {
 		status = "FAIL"
 		missing = append(missing, "wrapper skill creation via /iter:install")
 	}
@@ -236,30 +202,30 @@ func TestSkillsDiscovery(t *testing.T) {
 	// New unified structure: only "iter" and "install"
 	expectedSkills := []string{"iter", "install"}
 	for _, skill := range expectedSkills {
-		if !strings.Contains(outputStr, "OK: "+skill+" skill has name field") {
+		if !strings.Contains(output, "OK: "+skill+" skill has name field") {
 			status = "FAIL"
 			missing = append(missing, "OK: "+skill+" skill has name field")
 		}
 	}
 
 	// Write result summary
-	resultDir.WriteResult(status, missing)
+	setup.ResultDir.WriteResult(status, missing)
 
 	// Report failures
-	if !strings.Contains(outputStr, "All skills discovery tests passed") {
+	if !strings.Contains(output, "All skills discovery tests passed") {
 		t.Errorf("Skills discovery tests did not pass")
 	}
 
-	if strings.Contains(outputStr, "Unknown skill") {
+	if strings.Contains(output, "Unknown skill") {
 		t.Errorf("Some skills were not recognized by Claude")
 	}
 
-	if !strings.Contains(outputStr, "Wrapper skill created at") {
+	if !strings.Contains(output, "Wrapper skill created at") {
 		t.Errorf("/iter:install failed to create wrapper skill at ~/.claude/skills/iter/SKILL.md")
 	}
 
 	for _, skill := range expectedSkills {
-		if !strings.Contains(outputStr, "OK: "+skill+" skill has name field") {
+		if !strings.Contains(output, "OK: "+skill+" skill has name field") {
 			t.Errorf("Skill %s missing required name field for autocomplete", skill)
 		}
 	}

@@ -1,13 +1,8 @@
 package docker
 
 import (
-	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 // TestPluginInstallation tests that the iter plugin installs correctly
@@ -21,46 +16,14 @@ import (
 //  6. Check plugin cache structure
 //  7. Test iter binary version
 //  8. Test iter binary help
-//  9. Test claude -p '/iter:run -v'
-//  10. Test interactive /iter:run -v
+//  9. Test claude -p '/iter:iter -v'
+//  10. Test interactive /iter:iter -v
 //  11. Check /iter wrapper installation
 //  12. Test /iter -v shortcut
 func TestPluginInstallation(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping Docker integration test in short mode")
-	}
-
-	// Check Docker availability
-	dockerCheck := exec.Command("docker", "info")
-	if err := dockerCheck.Run(); err != nil {
-		t.Skip("Docker not available, skipping integration test")
-	}
-
-	// Get project root and API key
-	projectRoot := findProjectRoot(t)
-	apiKey := loadAPIKey(t, projectRoot)
-
-	if apiKey == "" {
-		t.Skip("ANTHROPIC_API_KEY required")
-	}
-
-	// Build Docker image (reuses if exists)
-	buildDockerImage(t, projectRoot)
-
-	// Create results directory
-	timestamp := time.Now().Format("20060102-150405")
-	resultsDir := filepath.Join(projectRoot, "tests", "results", timestamp+"-plugin-installation")
-	if err := os.MkdirAll(resultsDir, 0755); err != nil {
-		t.Fatalf("Failed to create results directory: %v", err)
-	}
-
-	// Open log file
-	logPath := filepath.Join(resultsDir, "test-output.log")
-	logFile, err := os.Create(logPath)
-	if err != nil {
-		t.Fatalf("Failed to create log file: %v", err)
-	}
-	defer logFile.Close()
+	// Setup test (handles Docker, auth, image build, result dir)
+	setup := setupDockerTest(t, "plugin-installation")
+	defer setup.Close()
 
 	// Comprehensive test script that covers all 12 steps from the original shell script
 	testScript := `
@@ -133,7 +96,7 @@ if [ -d "$CACHE_DIR" ]; then
     echo "Latest version: $LATEST_VERSION"
 
     if [ -n "$LATEST_VERSION" ]; then
-        SKILL_FILE="$CACHE_DIR/$LATEST_VERSION/skills/run/SKILL.md"
+        SKILL_FILE="$CACHE_DIR/$LATEST_VERSION/skills/iter/SKILL.md"
         if [ -f "$SKILL_FILE" ]; then
             echo ""
             echo "Checking SKILL.md for 'name' field..."
@@ -214,59 +177,62 @@ git config user.name "Test"
 
 # Get the expected version from the binary
 EXPECTED_VERSION=$("$ITER_BIN" version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+-[0-9]+' | head -1)
+if [ -z "$EXPECTED_VERSION" ]; then
+    EXPECTED_VERSION="dev"
+fi
 echo "Expected iter version: $EXPECTED_VERSION"
 echo ""
 
-# [9/12] Test claude -p '/iter:run -v' (command line invocation)
-echo "[9/12] Testing: claude -p '/iter:run -v' (command line)..."
+# [9/12] Test claude -p '/iter:iter -v' (command line invocation)
+echo "[9/12] Testing: claude -p '/iter:iter -v' (command line)..."
 echo ""
 
-CLAUDE_CMD_OUTPUT=$(timeout 120 claude -p '/iter:run -v' 2>&1) || CMD_EXIT=$?
+CLAUDE_CMD_OUTPUT=$(timeout 120 claude -p '/iter:iter -v' --dangerously-skip-permissions 2>&1) || CMD_EXIT=$?
 CMD_EXIT=${CMD_EXIT:-0}
 
-echo "--- claude -p '/iter:run -v' output ---"
+echo "--- claude -p '/iter:iter -v' output ---"
 echo "$CLAUDE_CMD_OUTPUT"
 echo "--- end (exit code: $CMD_EXIT) ---"
 echo ""
 
-# Check if /iter:run was recognized and executed with correct version
+# Check if /iter:iter was recognized and executed with correct version
 if echo "$CLAUDE_CMD_OUTPUT" | grep -qE "$EXPECTED_VERSION"; then
-    echo "OK: /iter:run -v executed via command line (version matches)"
+    echo "OK: /iter:iter -v executed via command line (version matches)"
     CMD_TEST_PASS=1
-elif echo "$CLAUDE_CMD_OUTPUT" | grep -qiE "(iter version|ITERATIVE IMPLEMENTATION)"; then
-    echo "OK: /iter:run -v executed via command line"
+elif echo "$CLAUDE_CMD_OUTPUT" | grep -qiE "(iter version|ITERATIVE IMPLEMENTATION|VERSION MODE)"; then
+    echo "OK: /iter:iter -v executed via command line"
     CMD_TEST_PASS=1
 else
-    echo "FAIL: /iter:run -v did NOT execute properly via command line"
+    echo "FAIL: /iter:iter -v did NOT execute properly via command line"
     echo "Expected output to contain version '$EXPECTED_VERSION' or 'iter version'"
     CMD_TEST_PASS=0
 fi
 echo ""
 
 # [10/12] Test interactive mode
-echo "[10/12] Testing: /iter:run -v in interactive Claude session..."
+echo "[10/12] Testing: /iter:iter -v in interactive Claude session..."
 echo "(This also triggers SessionStart hook to install /iter wrapper)"
 echo ""
 
 INTERACTIVE_OUTPUT=$(timeout 120 bash -c '
-echo "/iter:run -v" | claude --dangerously-skip-permissions 2>&1
+echo "/iter:iter -v" | claude --dangerously-skip-permissions 2>&1
 ' 2>&1) || INT_EXIT=$?
 INT_EXIT=${INT_EXIT:-0}
 
-echo "--- Interactive /iter:run -v output ---"
+echo "--- Interactive /iter:iter -v output ---"
 echo "$INTERACTIVE_OUTPUT"
 echo "--- end (exit code: $INT_EXIT) ---"
 echo ""
 
-# Check if /iter:run was recognized and executed
+# Check if /iter:iter was recognized and executed
 if echo "$INTERACTIVE_OUTPUT" | grep -qE "$EXPECTED_VERSION"; then
-    echo "OK: /iter:run -v executed in interactive mode (version matches)"
+    echo "OK: /iter:iter -v executed in interactive mode (version matches)"
     INT_TEST_PASS=1
-elif echo "$INTERACTIVE_OUTPUT" | grep -qiE "(iter version|ITERATIVE IMPLEMENTATION)"; then
-    echo "OK: /iter:run -v executed in interactive mode"
+elif echo "$INTERACTIVE_OUTPUT" | grep -qiE "(iter version|ITERATIVE IMPLEMENTATION|VERSION MODE)"; then
+    echo "OK: /iter:iter -v executed in interactive mode"
     INT_TEST_PASS=1
 else
-    echo "FAIL: /iter:run -v did NOT execute properly in interactive mode"
+    echo "FAIL: /iter:iter -v did NOT execute properly in interactive mode"
     echo "Expected output to contain version '$EXPECTED_VERSION' or 'iter version'"
     INT_TEST_PASS=0
 fi
@@ -306,7 +272,7 @@ echo ""
 if echo "$ITER_SHORTCUT_OUTPUT" | grep -qE "$EXPECTED_VERSION"; then
     echo "OK: /iter -v executed and version matches ($EXPECTED_VERSION)"
     SHORTCUT_TEST_PASS=1
-elif echo "$ITER_SHORTCUT_OUTPUT" | grep -qiE "iter version"; then
+elif echo "$ITER_SHORTCUT_OUTPUT" | grep -qiE "(iter version|VERSION MODE)"; then
     echo "OK: /iter -v executed (version output detected)"
     SHORTCUT_TEST_PASS=1
 else
@@ -320,8 +286,8 @@ echo ""
 echo "=========================================="
 echo "TEST RESULTS"
 echo "=========================================="
-echo "Command line test (claude -p '/iter:run -v'): $([ $CMD_TEST_PASS -eq 1 ] && echo 'PASS' || echo 'FAIL')"
-echo "Interactive test (/iter:run -v in session):  $([ $INT_TEST_PASS -eq 1 ] && echo 'PASS' || echo 'FAIL')"
+echo "Command line test (claude -p '/iter:iter -v'): $([ $CMD_TEST_PASS -eq 1 ] && echo 'PASS' || echo 'FAIL')"
+echo "Interactive test (/iter:iter -v in session):  $([ $INT_TEST_PASS -eq 1 ] && echo 'PASS' || echo 'FAIL')"
 echo "Wrapper installation (SessionStart hook):   $([ $WRAPPER_INSTALLED -eq 1 ] && echo 'PASS' || echo 'FAIL')"
 echo "Shortcut test (/iter -v):                   $([ $SHORTCUT_TEST_PASS -eq 1 ] && echo 'PASS' || echo 'FAIL')"
 echo ""
@@ -346,31 +312,11 @@ else
 fi
 `
 
-	// Run Docker container with inline script
-	t.Log("Running Docker test container...")
-	logFile.WriteString("=== Docker Run ===\n")
+	output, err := setup.RunScript(testScript)
 
-	runArgs := []string{"run", "--rm"}
-	t.Log("API key found, running full Claude integration test")
-	runArgs = append(runArgs, "-e", "ANTHROPIC_API_KEY="+apiKey)
-	runArgs = append(runArgs, "--entrypoint", "bash")
-	runArgs = append(runArgs, dockerImage)
-	runArgs = append(runArgs, "-c", testScript)
-
-	runCmd := exec.Command("docker", runArgs...)
-	runCmd.Dir = projectRoot
-	output, err := runCmd.CombinedOutput()
-
-	// Write output to log file
-	logFile.Write(output)
-
-	// Log output for debugging
-	t.Logf("Docker test output:\n%s", output)
-
-	// Write result file
-	outputStr := string(output)
-	resultPath := filepath.Join(resultsDir, "result.txt")
+	// Determine test result
 	status := "PASS"
+	var missing []string
 
 	// Check for expected outputs
 	expectedStrings := []string{
@@ -383,51 +329,42 @@ fi
 		"OK: iter help works",
 	}
 
-	var missing []string
 	for _, expected := range expectedStrings {
-		if !strings.Contains(outputStr, expected) {
+		if !strings.Contains(output, expected) {
 			missing = append(missing, expected)
 			status = "FAIL"
 		}
 	}
 
 	// Check Claude integration tests
-	if !strings.Contains(outputStr, "OK: /iter:run -v executed via command line") {
-		missing = append(missing, "OK: /iter:run -v executed via command line")
+	if !strings.Contains(output, "OK: /iter:iter -v executed via command line") {
+		missing = append(missing, "OK: /iter:iter -v executed via command line")
 		status = "FAIL"
 	}
-	if !strings.Contains(outputStr, "OK: /iter:run -v executed in interactive mode") {
-		missing = append(missing, "OK: /iter:run -v executed in interactive mode")
+	if !strings.Contains(output, "OK: /iter:iter -v executed in interactive mode") {
+		missing = append(missing, "OK: /iter:iter -v executed in interactive mode")
 		status = "FAIL"
 	}
 
 	// Check SessionStart hook installed the /iter wrapper
-	if !strings.Contains(outputStr, "OK: /iter wrapper skill installed") {
+	if !strings.Contains(output, "OK: /iter wrapper skill installed") {
 		missing = append(missing, "OK: /iter wrapper skill installed")
 		status = "FAIL"
 	}
 
 	// Check /iter -v shortcut works
-	if !strings.Contains(outputStr, "OK: /iter -v executed") {
+	if !strings.Contains(output, "OK: /iter -v executed") {
 		missing = append(missing, "OK: /iter -v executed")
 		status = "FAIL"
 	}
 
 	// Final check
-	if !strings.Contains(outputStr, "ALL TESTS PASSED") {
+	if !strings.Contains(output, "ALL TESTS PASSED") {
 		status = "FAIL"
 	}
 
-	// Write result file
-	resultContent := fmt.Sprintf("Status: %s\nTimestamp: %s\nResultsDir: %s\n",
-		status, time.Now().Format(time.RFC3339), resultsDir)
-	if len(missing) > 0 {
-		resultContent += "Missing:\n"
-		for _, m := range missing {
-			resultContent += fmt.Sprintf("  - %s\n", m)
-		}
-	}
-	os.WriteFile(resultPath, []byte(resultContent), 0644)
+	// Write result summary
+	setup.ResultDir.WriteResult(status, missing)
 
 	// Report failures
 	if err != nil {
@@ -439,6 +376,6 @@ fi
 	}
 
 	if status == "FAIL" {
-		t.Errorf("Test failed - /iter:run command not executing properly in Claude")
+		t.Errorf("Test failed - /iter:iter command not executing properly in Claude")
 	}
 }

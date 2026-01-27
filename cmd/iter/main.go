@@ -33,6 +33,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -592,6 +593,7 @@ func parseUnifiedArgs(args []string) (mode, modeArg, description string, remaini
 		"reset":              true,
 		"hook-stop":          true,
 		"hook-session-start": true,
+		"hook-pre-tool-use":  true,
 		"install":            true,
 		"index":              true,
 	}
@@ -655,6 +657,8 @@ func main() {
 		err = cmdHookStop(remaining)
 	case "hook-session-start":
 		err = cmdHookSessionStart(remaining)
+	case "hook-pre-tool-use":
+		err = cmdHookPreToolUse(remaining)
 	case "install":
 		cmdInstall()
 	case "index":
@@ -1801,6 +1805,48 @@ func ensureIndex(cfg index.Config) (*index.Indexer, error) {
 	return idx, nil
 }
 
+// cleanupOrphanedPluginVersions removes old orphaned iter plugin versions from Claude Code's cache.
+// Keeps the 2 most recent versions as a safety buffer.
+func cleanupOrphanedPluginVersions(homeDir string) (cleaned int) {
+	cacheDir := filepath.Join(homeDir, ".claude", "plugins", "cache", "iter-local", "iter")
+
+	entries, err := os.ReadDir(cacheDir)
+	if err != nil {
+		return 0
+	}
+
+	// Collect orphaned versions (directories with .orphaned_at file)
+	var orphaned []string
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		orphanMarker := filepath.Join(cacheDir, entry.Name(), ".orphaned_at")
+		if _, err := os.Stat(orphanMarker); err == nil {
+			orphaned = append(orphaned, entry.Name())
+		}
+	}
+
+	// Keep 2 most recent orphaned versions (sorted by name = version timestamp)
+	if len(orphaned) <= 2 {
+		return 0
+	}
+
+	// Sort ascending (oldest first) - version format is 2.1.YYYYMMDD-HHMM
+	sort.Strings(orphaned)
+
+	// Delete all but the last 2
+	toDelete := orphaned[:len(orphaned)-2]
+	for _, version := range toDelete {
+		versionPath := filepath.Join(cacheDir, version)
+		if err := os.RemoveAll(versionPath); err == nil {
+			cleaned++
+		}
+	}
+
+	return cleaned
+}
+
 // cmdHookSessionStart handles the SessionStart hook to auto-install the /iter wrapper skill.
 func cmdHookSessionStart(args []string) error {
 	homeDir, err := os.UserHomeDir()
@@ -1808,6 +1854,9 @@ func cmdHookSessionStart(args []string) error {
 		// Can't get home dir - continue without installing
 		return outputJSON(HookResponse{Continue: true})
 	}
+
+	// Clean up old orphaned plugin versions (runs silently)
+	cleanupOrphanedPluginVersions(homeDir)
 
 	skillDir := filepath.Join(homeDir, ".claude", "skills", "iter")
 	skillFile := filepath.Join(skillDir, "SKILL.md")
@@ -1844,6 +1893,56 @@ $ARGUMENTS
 		Continue:      true,
 		SystemMessage: "Iter shortcut installed. The /iter command is now available.",
 	})
+}
+
+// PreToolUseInput represents the JSON input for PreToolUse hooks.
+type PreToolUseInput struct {
+	ToolName  string `json:"tool_name"`
+	ToolInput struct {
+		Skill string `json:"skill"`
+		Args  string `json:"args"`
+	} `json:"tool_input"`
+}
+
+// cmdHookPreToolUse handles the PreToolUse hook to display iter version when skill is invoked.
+func cmdHookPreToolUse(args []string) error {
+	// Read hook input from stdin
+	var input PreToolUseInput
+	decoder := json.NewDecoder(os.Stdin)
+	if err := decoder.Decode(&input); err != nil {
+		// Can't parse input - allow continuation
+		return outputJSON(HookResponse{Continue: true})
+	}
+
+	// Only process for Skill tool with iter
+	if input.ToolName != "Skill" {
+		return outputJSON(HookResponse{Continue: true})
+	}
+
+	// Check if this is an iter skill (iter, iter:iter, iter:install, etc.)
+	skill := input.ToolInput.Skill
+	if skill != "iter" && !strings.HasPrefix(skill, "iter:") {
+		return outputJSON(HookResponse{Continue: true})
+	}
+
+	// Detect mode from args
+	mode := "run"
+	skillArgs := input.ToolInput.Args
+	if strings.HasPrefix(skillArgs, "-v") || skillArgs == "--version" || skillArgs == "version" {
+		mode = "version"
+	} else if strings.HasPrefix(skillArgs, "-t:") {
+		mode = "test"
+	} else if strings.HasPrefix(skillArgs, "-w:") {
+		mode = "workflow"
+	} else if strings.HasPrefix(skillArgs, "-r") || skillArgs == "--reindex" {
+		mode = "reindex"
+	}
+
+	// Output to stderr (visible to user)
+	fmt.Fprintf(os.Stderr, "iter v%s [%s]\n", version, mode)
+
+	// Continue with skill execution
+	return outputJSON(HookResponse{Continue: true})
 }
 
 // cmdIndex handles the index subcommand.

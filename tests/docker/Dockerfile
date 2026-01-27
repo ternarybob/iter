@@ -13,6 +13,14 @@ RUN npm install -g @anthropic-ai/claude-code
 
 # Create test user (claude doesn't like running as root)
 RUN useradd -m -s /bin/bash testuser
+
+# Pre-create .claude directory structure with correct ownership
+# This allows credentials to be mounted without permission issues
+RUN mkdir -p /home/testuser/.claude/plugins/marketplaces \
+    /home/testuser/.claude/plugins/cache \
+    /home/testuser/.claude/skills \
+    && chown -R testuser:testuser /home/testuser/.claude
+
 USER testuser
 WORKDIR /home/testuser
 
