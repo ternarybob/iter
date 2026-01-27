@@ -853,6 +853,12 @@ On completion, changes will be merged back to '%s'.
 	// Get OS guidance
 	osGuidance := getOSGuidance(osInfo)
 
+	// Build worktree session info line
+	worktreeLine := ""
+	if state.WorktreePath != "" {
+		worktreeLine = fmt.Sprintf("- Worktree: %s\n", state.WorktreePath)
+	}
+
 	// Output the full iterative implementation prompt
 	fmt.Printf(`# ITERATIVE IMPLEMENTATION
 
@@ -879,7 +885,7 @@ Begin by analyzing the codebase and creating your implementation plan.
 - Iteration: %d/%d
 - State: .iter/state.json
 - Artifacts: %s/
-
+%s
 ## Next Steps
 1. Create requirements.md, step_N.md files, architect-analysis.md
 2. Set total steps: Update .iter/state.json "total_steps" field
@@ -894,7 +900,7 @@ Exit is blocked until completion - use 'iter complete' when done or 'iter reset'
 		prompts.SystemRules,
 		prompts.ValidationRules,
 		prompts.ArchitectRole,
-		state.Iteration, state.MaxIterations, state.Workdir)
+		state.Iteration, state.MaxIterations, state.Workdir, worktreeLine)
 
 	return nil
 }
@@ -1000,6 +1006,12 @@ On completion, changes will be merged back to '%s'.
 	// Get OS guidance
 	osGuidance := getOSGuidance(osInfo)
 
+	// Build worktree session info line
+	worktreeLine := ""
+	if state.WorktreePath != "" {
+		worktreeLine = fmt.Sprintf("- Worktree: %s\n", state.WorktreePath)
+	}
+
 	fmt.Printf(`# WORKFLOW EXECUTION
 %s
 %s
@@ -1027,7 +1039,7 @@ On completion, changes will be merged back to '%s'.
 - Iteration: %d/%d
 - State: .iter/state.json
 - Artifacts: %s/
-
+%s
 Use 'iter pass'/'iter reject' to record phase outcomes.
 Use 'iter next' to advance phases.
 Use 'iter complete' when workflow is done.
@@ -1038,7 +1050,7 @@ Use 'iter complete' when workflow is done.
 		prompts.ValidationRules,
 		spec,
 		prompts.WorkflowSystem,
-		state.Iteration, state.MaxIterations, state.Workdir)
+		state.Iteration, state.MaxIterations, state.Workdir, worktreeLine)
 
 	return nil
 }
@@ -1162,6 +1174,12 @@ On completion, changes will be merged back to '%s' (no push to remote).
 		testCmd = fmt.Sprintf("go test -v -run '%s' %s", strings.Join(testNames, "|"), testFile)
 	}
 
+	// Build worktree session info line
+	worktreeLine := ""
+	if state.WorktreePath != "" {
+		worktreeLine = fmt.Sprintf("- Worktree: %s\n", state.WorktreePath)
+	}
+
 	// Output the test session prompt
 	fmt.Printf(`# TEST-DRIVEN ITERATION
 
@@ -1197,11 +1215,11 @@ If you detect these issues, advise the user:
 - Iteration: %d/%d
 - State: .iter/state.json
 - Artifacts: %s/
-
+%s
 ## Completion
 When tests pass, run 'iter complete' to:
 - Merge changes to original branch
-- Clean up worktree
+- Worktree is preserved for review
 - Note: Changes are NOT pushed to remote
 
 The session will continue until tests pass or max iterations reached.
@@ -1217,7 +1235,7 @@ The session will continue until tests pass or max iterations reached.
 		worktreeInfo,
 		osGuidance,
 		state.MaxIterations,
-		state.Iteration, state.MaxIterations, state.Workdir)
+		state.Iteration, state.MaxIterations, state.Workdir, worktreeLine)
 
 	return nil
 }
@@ -1432,15 +1450,16 @@ func cmdComplete(args []string) error {
 		} else {
 			fmt.Println("Worktree merged successfully.")
 
-			// Cleanup worktree (keep branch for reference)
-			if err := cleanupWorktree(state, false); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to cleanup worktree: %v\n", err)
-			}
-
 			// Change back to original directory
 			if state.OriginalWorkdir != "" {
 				_ = os.Chdir(state.OriginalWorkdir)
 			}
+
+			// Print worktree preservation message and cleanup instructions
+			fmt.Printf("\nWorktree preserved at: %s\n", state.WorktreePath)
+			fmt.Println("\nTo clean up when ready:")
+			fmt.Printf("  git worktree remove %s\n", state.WorktreePath)
+			fmt.Printf("  git branch -D %s\n", state.WorktreeBranch)
 		}
 	}
 
@@ -1467,7 +1486,14 @@ func cmdComplete(args []string) error {
 ## Git Info
 - Original Branch: %s
 - Work Branch: %s
-`, state.OriginalBranch, state.WorktreeBranch)
+- Worktree Path: %s
+
+## Cleanup
+When ready to remove the worktree:
+`+"```bash\n"+`git worktree remove %s
+git branch -D %s
+`+"```\n", state.OriginalBranch, state.WorktreeBranch, state.WorktreePath,
+			state.WorktreePath, state.WorktreeBranch)
 	}
 
 	summary += "\n## Verdicts\n"
@@ -1491,11 +1517,9 @@ func cmdComplete(args []string) error {
 
 // cmdReset clears session state.
 func cmdReset(args []string) error {
-	// Try to load state to cleanup worktree
+	// Try to load state to handle worktree
 	state, err := loadState()
 	if err == nil && state.WorktreeBranch != "" {
-		fmt.Println("Cleaning up worktree...")
-
 		// Change back to original directory first
 		if state.OriginalWorkdir != "" {
 			_ = os.Chdir(state.OriginalWorkdir)
@@ -1508,10 +1532,12 @@ func cmdReset(args []string) error {
 			}
 		}
 
-		// Cleanup worktree and delete the branch (since we're resetting)
-		if err := cleanupWorktree(state, true); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to cleanup worktree: %v\n", err)
-		}
+		// Print worktree preservation message and cleanup instructions
+		fmt.Printf("Worktree preserved at: %s\n", state.WorktreePath)
+		fmt.Println("\nTo clean up when ready:")
+		fmt.Printf("  git worktree remove %s\n", state.WorktreePath)
+		fmt.Printf("  git branch -D %s\n", state.WorktreeBranch)
+		fmt.Println()
 	}
 
 	if err := os.RemoveAll(stateDir); err != nil {
