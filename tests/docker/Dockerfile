@@ -19,9 +19,6 @@ WORKDIR /home/testuser
 # Copy plugin files
 COPY --chown=testuser:testuser bin/ /home/testuser/iter-plugin/
 
-# Copy test script
-COPY --chown=testuser:testuser tests/docker/test-plugin.sh /home/testuser/test-plugin.sh
-RUN chmod +x /home/testuser/test-plugin.sh
-
-# Set entrypoint
-ENTRYPOINT ["/home/testuser/test-plugin.sh"]
+# Default entrypoint - tests use --entrypoint bash with inline scripts
+ENTRYPOINT ["bash"]
+CMD ["-c", "echo 'Use --entrypoint bash -c \"<script>\" to run tests'"]
