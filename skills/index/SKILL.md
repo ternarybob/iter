@@ -1,12 +1,12 @@
 ---
 name: index
-description: Manage the code index for semantic search. Commands: status, build, clear, watch. Use before /iter:search for code navigation.
+description: Manage the code index for semantic search. Use -v to show version. Commands: status, build, clear, watch. Use before /iter:search for code navigation.
 allowed-tools: ["Bash", "Read"]
 ---
 
 ## Index Output
 
-!`${CLAUDE_PLUGIN_ROOT}/iter index $(printf '%s' "$ARGUMENTS" | sed 's/"/\\"/g') 2>&1`
+!`if [ "$ARGUMENTS" = "-v" ] || [ "$ARGUMENTS" = "--version" ]; then ${CLAUDE_PLUGIN_ROOT}/iter version 2>&1; else ${CLAUDE_PLUGIN_ROOT}/iter index $(printf '%s' "$ARGUMENTS" | sed 's/"/\\"/g') 2>&1; fi`
 
 ## Your Task
 

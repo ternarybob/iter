@@ -1,12 +1,12 @@
 ---
 name: search
-description: Search indexed code using semantic or keyword search. Returns relevant code locations with context. Requires index built via /iter:index.
+description: Search indexed code using semantic or keyword search. Use -v to show version. Returns relevant code locations with context. Requires index built via /iter:index.
 allowed-tools: ["Bash", "Read", "Glob", "Grep"]
 ---
 
 ## Search Results
 
-!`${CLAUDE_PLUGIN_ROOT}/iter search "$(printf '%s' "$ARGUMENTS" | sed 's/"/\\"/g')" 2>&1`
+!`if [ "$ARGUMENTS" = "-v" ] || [ "$ARGUMENTS" = "--version" ]; then ${CLAUDE_PLUGIN_ROOT}/iter version 2>&1; else ${CLAUDE_PLUGIN_ROOT}/iter search "$(printf '%s' "$ARGUMENTS" | sed 's/"/\\"/g')" 2>&1; fi`
 
 ## Your Task
 

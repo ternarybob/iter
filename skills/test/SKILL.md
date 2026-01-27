@@ -1,6 +1,6 @@
 ---
 name: test
-description: Run tests with automated iteration until pass (max 10 iterations)
+description: Run tests with automated iteration until pass (max 10 iterations). Use -v to show version.
 arguments: <test-file> [test-names...]
 examples:
   - test tests/docker/plugin_test.go TestPluginInstallation
@@ -38,7 +38,7 @@ Executes Go tests with automated iteration to fix failures. Runs up to 10 iterat
 
 ## Session Initialization
 
-!`${CLAUDE_PLUGIN_ROOT}/iter test "$(printf '%s' "$ARGUMENTS" | sed 's/"/\\"/g')" 2>&1`
+!`if [ "$ARGUMENTS" = "-v" ] || [ "$ARGUMENTS" = "--version" ]; then ${CLAUDE_PLUGIN_ROOT}/iter version 2>&1; else ${CLAUDE_PLUGIN_ROOT}/iter test "$(printf '%s' "$ARGUMENTS" | sed 's/"/\\"/g')" 2>&1; fi`
 
 ## Your Mission
 

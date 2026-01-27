@@ -1,12 +1,18 @@
 ---
 name: workflow
-description: Start workflow-based implementation with custom workflow spec. Executes phases sequentially using task management for ordered iteration.
+description: Start workflow-based implementation with custom workflow spec. Use -v to show version. Executes phases sequentially using task management for ordered iteration.
 allowed-tools: ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "TaskCreate", "TaskUpdate", "TaskList"]
 ---
 
 ## Workflow Initialization
 
 !`
+# Check for version flag first
+if [ "$ARGUMENTS" = "-v" ] || [ "$ARGUMENTS" = "--version" ]; then
+  ${CLAUDE_PLUGIN_ROOT}/iter version 2>&1
+  exit 0
+fi
+
 # Check if ARGUMENTS is a file path
 if [ -f "$ARGUMENTS" ]; then
   # Read file content

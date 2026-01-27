@@ -114,17 +114,21 @@ func TestSkillsDiscovery(t *testing.T) {
 			echo "OK: /iter:iter-search works"
 		fi
 
-		# Test iter:run with -v flag (version check)
+		# Test -v flag (version check) for all binary-backed skills
 		echo ""
-		echo "Testing /iter:run -v (version)..."
-		OUTPUT=$(timeout 60 claude -p "/iter:run -v" 2>&1)
-		if echo "$OUTPUT" | grep -qE "(iter version|version.*[0-9]+\.[0-9]+)"; then
-			echo "OK: /iter:run -v shows version"
-		else
-			echo "FAIL: /iter:run -v did not show version"
-			echo "Output: $OUTPUT"
-			exit 1
-		fi
+		echo "=== Testing -v flag for all skills ==="
+
+		for skill in run test workflow search index; do
+			echo "Testing /iter:$skill -v (version)..."
+			OUTPUT=$(timeout 60 claude -p "/iter:$skill -v" 2>&1)
+			if echo "$OUTPUT" | grep -qE "(iter version|version.*[0-9]+\.[0-9]+)"; then
+				echo "OK: /iter:$skill -v shows version"
+			else
+				echo "FAIL: /iter:$skill -v did not show version"
+				echo "Output: $OUTPUT"
+				exit 1
+			fi
+		done
 
 		echo ""
 		echo "=== All skills discovery tests passed ==="
