@@ -24,6 +24,9 @@ type Watcher struct {
 	// Debouncing state
 	pending   map[string]time.Time
 	pendingMu sync.Mutex
+
+	// Commit tracking
+	lastCommitHash string
 }
 
 // NewWatcher creates a new file system watcher.
@@ -57,11 +60,17 @@ func (w *Watcher) Start() error {
 		return fmt.Errorf("add directories: %w", err)
 	}
 
+	// Get initial commit hash
+	w.lastCommitHash = w.getCurrentCommitHash()
+
 	// Start event processing goroutine
 	go w.processEvents()
 
 	// Start debounce processor
 	go w.processDebounced()
+
+	// Start commit watcher
+	go w.watchCommits()
 
 	return nil
 }
@@ -222,4 +231,68 @@ func (w *Watcher) WatchGitHead() error {
 	}
 
 	return w.watcher.Add(filepath.Dir(gitHeadPath))
+}
+
+// getCurrentCommitHash returns the current HEAD commit hash.
+func (w *Watcher) getCurrentCommitHash() string {
+	cfg := w.indexer.GetConfig()
+	headPath := filepath.Join(cfg.RepoRoot, ".git", "HEAD")
+
+	data, err := os.ReadFile(headPath)
+	if err != nil {
+		return ""
+	}
+
+	content := strings.TrimSpace(string(data))
+
+	// If it's a ref, read the actual commit hash
+	if strings.HasPrefix(content, "ref: ") {
+		refPath := filepath.Join(cfg.RepoRoot, ".git", strings.TrimPrefix(content, "ref: "))
+		data, err = os.ReadFile(refPath)
+		if err != nil {
+			return ""
+		}
+		content = strings.TrimSpace(string(data))
+	}
+
+	return content
+}
+
+// watchCommits periodically checks for new commits and updates lineage.
+func (w *Watcher) watchCommits() {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-w.stopCh:
+			return
+		case <-ticker.C:
+			w.checkForNewCommits()
+		}
+	}
+}
+
+// checkForNewCommits checks if there are new commits and processes them.
+func (w *Watcher) checkForNewCommits() {
+	currentHash := w.getCurrentCommitHash()
+	if currentHash == "" || currentHash == w.lastCommitHash {
+		return
+	}
+
+	w.lastCommitHash = currentHash
+
+	// Update lineage if available
+	lineage := w.indexer.GetLineage()
+	if lineage != nil {
+		_, err := lineage.SummarizeCommit(currentHash)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to summarize commit %s: %v\n", currentHash[:7], err)
+		}
+	}
+
+	// Save DAG after commit (may have new files)
+	if err := w.indexer.SaveDAG(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to save DAG: %v\n", err)
+	}
 }

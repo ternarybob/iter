@@ -318,10 +318,9 @@ func TestSkillsExist(t *testing.T) {
 	projectRoot := findTestProjectRoot(t)
 	skillsDir := filepath.Join(projectRoot, "skills")
 
-	// New unified structure: only "iter" (main skill) and "install" (wrapper installer)
+	// Only "iter" (main skill) - install skill removed in favor of auto-activation
 	expectedSkills := []string{
 		"iter",
-		"install",
 	}
 
 	for _, skill := range expectedSkills {

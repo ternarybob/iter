@@ -39,6 +39,7 @@ import (
 	"syscall"
 	"time"
 
+	iter "github.com/ternarybob/iter"
 	"github.com/ternarybob/iter/index"
 )
 
@@ -355,7 +356,7 @@ func getStateDir() string {
 	return filepath.Join(findProjectRoot(), stateDir)
 }
 
-// Embedded prompts - all prompt content lives here in the binary
+// Prompts holds all prompt content loaded from embedded files
 var prompts = struct {
 	SystemRules     string
 	ArchitectRole   string
@@ -364,101 +365,10 @@ var prompts = struct {
 	WorkflowSystem  string
 	ValidationRules string
 }{
-	SystemRules: `## EXECUTION RULES
-
-These rules are NON-NEGOTIABLE:
-
-1. **CORRECTNESS OVER SPEED** - Never rush. Quality is mandatory.
-2. **REQUIREMENTS ARE LAW** - No interpretation, no deviation, no "improvements"
-3. **EXISTING PATTERNS ARE LAW** - Match codebase style exactly
-4. **BUILD MUST PASS** - Verify after every change
-5. **CLEANUP IS MANDATORY** - Remove dead code, no orphaned artifacts
-6. **TESTS MUST PASS** - All existing tests, plus new tests for new code`,
-
-	ArchitectRole: `## ARCHITECT PHASE
-
-You are analyzing requirements and creating an implementation plan.
-
-### Instructions
-1. **Analyze Codebase First**: Examine existing patterns, conventions, architecture
-2. **Extract Requirements**: List ALL explicit and implicit requirements
-3. **Identify Cleanup**: Find dead code, redundant patterns, technical debt
-4. **Create Step Plan**: Break work into discrete, verifiable steps
-
-### Output Files (create in .iter/workdir/)
-
-**requirements.md**
-- Unique IDs: R1, R2, R3...
-- Priority: MUST | SHOULD | MAY
-- Include implicit requirements (error handling, tests, docs)
-
-**step_N.md** (one per step)
-- Title: Brief description
-- Requirements: Which R-IDs this addresses
-- Approach: Detailed implementation plan
-- Cleanup: Dead code to remove
-- Acceptance: How to verify completion
-
-**architect-analysis.md**
-- Patterns found in codebase
-- Architectural decisions made
-- Risk assessment`,
-
-	WorkerRole: `## WORKER PHASE
-
-You are implementing the current step exactly as specified.
-
-### CRITICAL RULES
-- Follow step document EXACTLY - no interpretation
-- Make ONLY the changes specified
-- Verify build passes after each change
-- Perform ALL cleanup listed in step doc
-- Document what you did in step_N_impl.md
-
-### Workflow
-1. Read .iter/workdir/step_N.md
-2. Implement exactly as specified
-3. Run build verification
-4. Create step_N_impl.md with summary
-5. Request validation`,
-
-	ValidatorRole: `## VALIDATOR PHASE
-
-**DEFAULT STANCE: REJECT**
-
-Your job is to find problems. Assume implementation is wrong until proven correct.
-
-### Validation Checklist
-
-**1. BUILD VERIFICATION** (AUTO-REJECT if fails)
-- Run build command
-- Run tests
-- Run linter
-
-**2. REQUIREMENTS TRACEABILITY** (AUTO-REJECT if missing)
-- Every change must trace to a requirement
-- Every requirement for this step must be implemented
-
-**3. CODE QUALITY**
-- Changes match existing patterns
-- Error handling is complete
-- No debug code left behind
-- Proper logging (not print statements)
-
-**4. CLEANUP VERIFICATION**
-- All cleanup items addressed
-- No new dead code introduced
-- No orphaned files
-
-**5. STEP COMPLETION**
-- All acceptance criteria met
-- Changes are minimal and focused
-- No scope creep
-
-### Verdict
-After review, call:
-- 'iter pass' - ALL checks pass
-- 'iter reject "specific reason"' - ANY check fails`,
+	SystemRules:   iter.PromptSystem,
+	ArchitectRole: iter.PromptArchitect,
+	WorkerRole:    iter.PromptWorker,
+	ValidatorRole: iter.PromptValidator,
 
 	WorkflowSystem: `## WORKFLOW MODE
 
@@ -596,6 +506,10 @@ func parseUnifiedArgs(args []string) (mode, modeArg, description string, remaini
 		"hook-pre-tool-use":  true,
 		"install":            true,
 		"index":              true,
+		"search":             true,
+		"deps":               true,
+		"impact":             true,
+		"history":            true,
 	}
 
 	if internalCommands[first] {
@@ -663,6 +577,14 @@ func main() {
 		cmdInstall()
 	case "index":
 		err = cmdIndex(remaining)
+	case "search":
+		err = cmdSearch(remaining)
+	case "deps":
+		err = cmdDeps(remaining)
+	case "impact":
+		err = cmdImpact(remaining)
+	case "history":
+		err = cmdHistory(remaining)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown mode: %s\n", mode)
 		printUsage()
@@ -711,6 +633,12 @@ Session Commands:
   reset                  Reset session state (cleans up worktree)
   install                Show installer for /iter shortcut skill
   help                   Show this help
+
+Code Discovery Commands:
+  search "<query>"       Semantic code search
+  deps "<symbol>"        Show what symbol depends on and what depends on it
+  impact "<file>"        Show what's affected by file changes
+  history [N]            Show commit lineage summaries (default: 10)
 
 Index Commands:
   index                  Show index status
@@ -1847,7 +1775,8 @@ func cleanupOrphanedPluginVersions(homeDir string) (cleaned int) {
 	return cleaned
 }
 
-// cmdHookSessionStart handles the SessionStart hook to auto-install the /iter wrapper skill.
+// cmdHookSessionStart handles the SessionStart hook to auto-install the /iter wrapper skill
+// and auto-generate CLAUDE.md for index-first code discovery.
 func cmdHookSessionStart(args []string) error {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -1858,22 +1787,15 @@ func cmdHookSessionStart(args []string) error {
 	// Clean up old orphaned plugin versions (runs silently)
 	cleanupOrphanedPluginVersions(homeDir)
 
+	var messages []string
+
+	// Install /iter wrapper skill if not present
 	skillDir := filepath.Join(homeDir, ".claude", "skills", "iter")
 	skillFile := filepath.Join(skillDir, "SKILL.md")
 
-	// Check if wrapper skill already exists
-	if _, err := os.Stat(skillFile); err == nil {
-		// Already exists - nothing to do
-		return outputJSON(HookResponse{Continue: true})
-	}
-
-	// Create the wrapper skill
-	if err := os.MkdirAll(skillDir, 0755); err != nil {
-		// Can't create directory - continue without installing
-		return outputJSON(HookResponse{Continue: true})
-	}
-
-	skillContent := `---
+	if _, err := os.Stat(skillFile); os.IsNotExist(err) {
+		if err := os.MkdirAll(skillDir, 0755); err == nil {
+			skillContent := `---
 name: iter
 description: Adversarial iterative implementation. Use -v for version, -t:<file> for test mode, -w:<file> for workflow mode, -r to reindex, or just provide a task description.
 ---
@@ -1883,16 +1805,55 @@ Execute the plugin skill ` + "`/iter:iter`" + ` with the same arguments.
 Arguments:
 $ARGUMENTS
 `
+			if err := os.WriteFile(skillFile, []byte(skillContent), 0644); err == nil {
+				messages = append(messages, "Iter shortcut /iter installed.")
+			}
+		}
+	}
 
-	if err := os.WriteFile(skillFile, []byte(skillContent), 0644); err != nil {
-		// Can't write file - continue without installing
-		return outputJSON(HookResponse{Continue: true})
+	// Auto-generate CLAUDE.md at repo root if not present
+	repoRoot := findProjectRoot()
+	claudeMDPath := filepath.Join(repoRoot, "CLAUDE.md")
+
+	if _, err := os.Stat(claudeMDPath); os.IsNotExist(err) {
+		claudeContent := generateClaudeMD()
+		if err := os.WriteFile(claudeMDPath, []byte(claudeContent), 0644); err == nil {
+			messages = append(messages, "CLAUDE.md generated with iter default process.")
+		}
+	}
+
+	// Auto-start index daemon
+	cfg := index.DefaultConfig(repoRoot)
+	if running, _ := isDaemonRunning(cfg); !running {
+		if err := spawnDaemonBackground(cfg); err == nil {
+			messages = append(messages, "Index daemon started.")
+		}
+	}
+
+	systemMsg := ""
+	if len(messages) > 0 {
+		systemMsg = strings.Join(messages, " ")
 	}
 
 	return outputJSON(HookResponse{
 		Continue:      true,
-		SystemMessage: "Iter shortcut installed. The /iter command is now available.",
+		SystemMessage: systemMsg,
 	})
+}
+
+// generateClaudeMD generates the CLAUDE.md content from the template.
+func generateClaudeMD() string {
+	// Simple template substitution (avoiding text/template dependency)
+	content := iter.ClaudeMDTemplate
+	content = strings.ReplaceAll(content, "{{.Version}}", version)
+
+	// Remove template conditionals for conventions section
+	content = strings.ReplaceAll(content, "{{if .Conventions}}", "")
+	content = strings.ReplaceAll(content, "{{.Conventions}}", "")
+	content = strings.ReplaceAll(content, "{{else}}", "")
+	content = strings.ReplaceAll(content, "{{end}}", "")
+
+	return content
 }
 
 // PreToolUseInput represents the JSON input for PreToolUse hooks.
@@ -2436,5 +2397,100 @@ func outputJSON(v any) error {
 		return err
 	}
 	fmt.Println(string(data))
+	return nil
+}
+
+// cmdDeps shows dependencies for a symbol.
+func cmdDeps(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: iter deps \"<symbol>\"")
+	}
+
+	symbolName := args[0]
+	repoRoot := findProjectRoot()
+	cfg := index.DefaultConfig(repoRoot)
+
+	idx, err := ensureIndex(cfg)
+	if err != nil {
+		return err
+	}
+
+	searcher := index.NewSearcher(idx)
+
+	// Get dependencies (what this symbol depends on)
+	deps, err := searcher.GetDependencies(symbolName)
+	if err != nil {
+		return fmt.Errorf("get dependencies: %w", err)
+	}
+
+	printBanner()
+	fmt.Println(deps.FormatDependencies("Dependencies"))
+
+	// Also get dependents (what depends on this symbol)
+	dependents, err := searcher.GetDependents(symbolName)
+	if err == nil {
+		fmt.Println(dependents.FormatDependencies("Dependents"))
+	}
+
+	return nil
+}
+
+// cmdImpact shows impact analysis for a file.
+func cmdImpact(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: iter impact \"<file>\"")
+	}
+
+	filePath := args[0]
+	repoRoot := findProjectRoot()
+	cfg := index.DefaultConfig(repoRoot)
+
+	idx, err := ensureIndex(cfg)
+	if err != nil {
+		return err
+	}
+
+	searcher := index.NewSearcher(idx)
+	impact, err := searcher.GetImpact(filePath)
+	if err != nil {
+		return fmt.Errorf("get impact: %w", err)
+	}
+
+	printBanner()
+	fmt.Println(impact.FormatImpact())
+
+	return nil
+}
+
+// cmdHistory shows commit history with summaries.
+func cmdHistory(args []string) error {
+	limit := 10
+	if len(args) > 0 {
+		if n, err := strconv.Atoi(args[0]); err == nil && n > 0 {
+			limit = n
+		}
+	}
+
+	repoRoot := findProjectRoot()
+	cfg := index.DefaultConfig(repoRoot)
+
+	idx, err := ensureIndex(cfg)
+	if err != nil {
+		return err
+	}
+
+	lineage := idx.GetLineage()
+	if lineage == nil {
+		return fmt.Errorf("lineage tracking not initialized")
+	}
+
+	summaries, err := lineage.GetRecentHistory(limit)
+	if err != nil {
+		return fmt.Errorf("get history: %w", err)
+	}
+
+	printBanner()
+	fmt.Println(index.FormatHistory(summaries))
+
 	return nil
 }

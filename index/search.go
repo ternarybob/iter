@@ -324,3 +324,128 @@ func FormatResultsWithCode(results []SearchResult, indexer *Indexer) string {
 
 	return sb.String()
 }
+
+// GetDependencies returns all symbols that the given symbol depends on.
+func (s *Searcher) GetDependencies(symbolName string) (*DependencyResult, error) {
+	dag := s.indexer.GetDAG()
+	if dag == nil {
+		return nil, fmt.Errorf("DAG not initialized")
+	}
+
+	// Find the node by name
+	nodes := dag.FindNodeByName(symbolName)
+	if len(nodes) == 0 {
+		return nil, fmt.Errorf("symbol not found: %s", symbolName)
+	}
+
+	result := &DependencyResult{
+		Symbol:       symbolName,
+		Dependencies: make(map[EdgeType][]*Node),
+	}
+
+	for _, node := range nodes {
+		edges := dag.GetDependencies(node.ID)
+		for _, edge := range edges {
+			targetNode, ok := dag.GetNode(edge.Target)
+			if !ok {
+				continue
+			}
+			result.Dependencies[edge.EdgeType] = append(
+				result.Dependencies[edge.EdgeType], targetNode)
+		}
+	}
+
+	return result, nil
+}
+
+// GetDependents returns all symbols that depend on the given symbol.
+func (s *Searcher) GetDependents(symbolName string) (*DependencyResult, error) {
+	dag := s.indexer.GetDAG()
+	if dag == nil {
+		return nil, fmt.Errorf("DAG not initialized")
+	}
+
+	// Find the node by name
+	nodes := dag.FindNodeByName(symbolName)
+	if len(nodes) == 0 {
+		return nil, fmt.Errorf("symbol not found: %s", symbolName)
+	}
+
+	result := &DependencyResult{
+		Symbol:       symbolName,
+		Dependencies: make(map[EdgeType][]*Node),
+	}
+
+	for _, node := range nodes {
+		edges := dag.GetDependents(node.ID)
+		for _, edge := range edges {
+			sourceNode, ok := dag.GetNode(edge.Source)
+			if !ok {
+				continue
+			}
+			result.Dependencies[edge.EdgeType] = append(
+				result.Dependencies[edge.EdgeType], sourceNode)
+		}
+	}
+
+	return result, nil
+}
+
+// GetImpact returns the impact analysis for a file.
+func (s *Searcher) GetImpact(filePath string) (*ImpactResult, error) {
+	dag := s.indexer.GetDAG()
+	if dag == nil {
+		return nil, fmt.Errorf("DAG not initialized")
+	}
+
+	return dag.GetImpact(filePath), nil
+}
+
+// DependencyResult contains the result of a dependency query.
+type DependencyResult struct {
+	Symbol       string               `json:"symbol"`
+	Dependencies map[EdgeType][]*Node `json:"dependencies"`
+}
+
+// FormatDependencies formats dependency results as markdown.
+func (r *DependencyResult) FormatDependencies(direction string) string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("# %s for `%s`\n\n", direction, r.Symbol))
+
+	total := 0
+	for _, nodes := range r.Dependencies {
+		total += len(nodes)
+	}
+
+	if total == 0 {
+		sb.WriteString("No dependencies found.\n")
+		return sb.String()
+	}
+
+	sb.WriteString(fmt.Sprintf("**Total**: %d\n\n", total))
+
+	edgeOrder := []EdgeType{EdgeCalls, EdgeImports, EdgeImplements, EdgeUses, EdgeEmbeds}
+	edgeLabels := map[EdgeType]string{
+		EdgeCalls:      "Calls",
+		EdgeImports:    "Imports",
+		EdgeImplements: "Implements",
+		EdgeUses:       "Uses",
+		EdgeEmbeds:     "Embeds",
+	}
+
+	for _, edgeType := range edgeOrder {
+		nodes := r.Dependencies[edgeType]
+		if len(nodes) == 0 {
+			continue
+		}
+
+		sb.WriteString(fmt.Sprintf("## %s (%d)\n\n", edgeLabels[edgeType], len(nodes)))
+		for _, node := range nodes {
+			sb.WriteString(fmt.Sprintf("- `%s` (%s) - %s:%d\n",
+				node.Name, node.Kind, node.FilePath, node.StartLine))
+		}
+		sb.WriteString("\n")
+	}
+
+	return sb.String()
+}

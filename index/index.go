@@ -55,6 +55,9 @@ type Indexer struct {
 	db         *chromem.DB
 	collection *chromem.Collection
 	parser     *Parser
+	dagParser  *DAGParser
+	dag        *DependencyGraph
+	lineage    *ContextLineage
 	mu         sync.RWMutex
 
 	// Stats tracking
@@ -83,11 +86,28 @@ func NewIndexer(cfg Config) (*Indexer, error) {
 		return nil, fmt.Errorf("create collection: %w", err)
 	}
 
+	// Initialize DAG
+	dagPath := filepath.Join(cfg.RepoRoot, cfg.IndexPath, "dag.json")
+	dag := NewDependencyGraph(dagPath)
+	if err := dag.Load(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to load DAG: %v\n", err)
+	}
+
+	// Initialize LLM client and lineage tracker
+	llmClient := NewLLMClient(DefaultLLMConfig())
+	lineage := NewContextLineage(cfg.RepoRoot, llmClient)
+	if err := lineage.Load(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to load lineage: %v\n", err)
+	}
+
 	return &Indexer{
 		cfg:        cfg,
 		db:         db,
 		collection: collection,
 		parser:     NewParser(cfg.RepoRoot),
+		dagParser:  NewDAGParser(cfg.RepoRoot),
+		dag:        dag,
+		lineage:    lineage,
 	}, nil
 }
 
@@ -148,6 +168,14 @@ func (idx *Indexer) IndexFile(path string) error {
 	}
 
 	idx.lastUpdated = time.Now()
+
+	// Update DAG for this file
+	if idx.dagParser != nil && idx.dag != nil {
+		if err := idx.dagParser.UpdateDAGForFile(idx.dag, path); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to update DAG for %s: %v\n", path, err)
+		}
+	}
+
 	return nil
 }
 
@@ -247,6 +275,17 @@ func (idx *Indexer) IndexAll() error {
 	idx.fileCount = len(fileSet)
 	idx.lastUpdated = time.Now()
 
+	// Build DAG for the repository
+	if idx.dagParser != nil && idx.dag != nil {
+		if err := idx.dagParser.BuildDAGForRepo(idx.dag, idx.cfg.ExcludeGlobs); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to build DAG: %v\n", err)
+		} else {
+			if err := idx.dag.Save(); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: failed to save DAG: %v\n", err)
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -289,6 +328,24 @@ func (idx *Indexer) GetCollection() *chromem.Collection {
 // GetConfig returns the indexer configuration.
 func (idx *Indexer) GetConfig() Config {
 	return idx.cfg
+}
+
+// GetDAG returns the dependency graph.
+func (idx *Indexer) GetDAG() *DependencyGraph {
+	return idx.dag
+}
+
+// GetLineage returns the context lineage tracker.
+func (idx *Indexer) GetLineage() *ContextLineage {
+	return idx.lineage
+}
+
+// SaveDAG persists the DAG to disk.
+func (idx *Indexer) SaveDAG() error {
+	if idx.dag != nil {
+		return idx.dag.Save()
+	}
+	return nil
 }
 
 // shouldExclude checks if a path should be excluded based on glob patterns.

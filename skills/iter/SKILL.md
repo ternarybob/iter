@@ -1,6 +1,6 @@
 ---
 name: iter
-description: Adversarial iterative implementation. Use -v for version, -t:<file> for test mode, -w:<file> for workflow mode, -r to reindex, or just provide a task description.
+description: Adversarial iterative implementation with semantic code indexing. Auto-activates on session start. Use search/deps/impact for code discovery, or start tasks with /iter "<task>".
 allowed-tools: ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "TaskCreate", "TaskUpdate", "TaskList"]
 ---
 
@@ -16,6 +16,22 @@ Analyze the output above to determine which mode iter is running in.
 
 **VERSION MODE** - If output shows "iter version X.X":
 - Report the version and stop
+
+**SEARCH MODE** - If output shows "# Relevant Code from Index":
+- Present the search results to the user
+- Suggest next steps based on findings
+
+**DEPS MODE** - If output shows "# Dependencies for":
+- Present the dependency analysis
+- Explain call relationships and usage patterns
+
+**IMPACT MODE** - If output shows "# Impact Analysis":
+- Present the impact analysis
+- Warn about files that would be affected by changes
+
+**HISTORY MODE** - If output shows "# Commit History":
+- Present the commit summaries
+- Highlight relevant changes for context
 
 **RUN MODE** - If output shows "# ITERATIVE IMPLEMENTATION":
 - Follow the iterative workflow using task management
@@ -40,10 +56,33 @@ Analyze the output above to determine which mode iter is running in.
 
 ---
 
+## CRITICAL: Index-First Code Discovery
+
+**ALWAYS use the semantic index before grep or file search:**
+
+```bash
+iter search "<query>"     # Semantic code search (understands code structure)
+iter deps "<symbol>"      # Show dependencies and dependents
+iter impact "<file>"      # Show change impact analysis
+iter history [N]          # Show commit history with summaries
+```
+
+The semantic index provides more accurate results than grep by understanding:
+- Function call graphs (who calls whom)
+- Import/export relationships
+- Type implementations
+- Change propagation paths
+
+---
+
 ## Syntax Reference
 
 ```
-/iter "<task>"                    # Default: iterative implementation
+/iter search "<query>"            # Semantic code search
+/iter deps "<symbol>"             # Dependency analysis
+/iter impact "<file>"             # Change impact analysis
+/iter history [N]                 # Commit history (default: 10)
+/iter "<task>"                    # Start iterative implementation
 /iter -t:<file> <description>     # Test mode with file
 /iter -w:<file> <description>     # Workflow from markdown file
 /iter -r                          # Rebuild code index
@@ -53,11 +92,31 @@ Analyze the output above to determine which mode iter is running in.
 ### Examples
 
 ```
+/iter search "error handling"
+/iter deps "cmdRun"
+/iter impact "cmd/iter/main.go"
+/iter history 20
 /iter "add health check endpoint"
 /iter -t:tests/docker/plugin_test.go check installation
 /iter -w:workflow.md include docker logs in results
-/iter -r
 ```
+
+---
+
+## Default Process (Auto-Activated)
+
+When iter is installed, the following happens automatically on session start:
+1. Index daemon starts in background
+2. CLAUDE.md is generated at repo root (if not present)
+3. /iter shortcut is installed
+
+The default process phases for implementation tasks:
+1. **WORKDIR**: Artifacts in `.iter/workdir/{timestamp}/`
+2. **WORKTREE**: Git worktree isolation
+3. **ARCHITECT**: Plan before implementing
+4. **WORKERS**: Implement one step at a time
+5. **VALIDATION**: Verify with adversarial stance (DEFAULT: REJECT)
+6. **DOCUMENTOR**: Update docs, create summary
 
 ---
 
