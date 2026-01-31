@@ -1,5 +1,5 @@
 # Docker Compose for iter-service testing
-# Provides isolated test environments - always builds fresh containers
+# Completely isolated containers - no shared directories with host
 
 services:
   # Run all tests (default)
@@ -7,8 +7,6 @@ services:
     build:
       context: ../..
       dockerfile: tests/docker/Dockerfile
-    volumes:
-      - ../../tests/results:/app/tests/results
     environment:
       - ITER_TEST_MODE=1
     command: go test -p 1 -v -timeout 300s ./tests/...
@@ -18,8 +16,6 @@ services:
     build:
       context: ../..
       dockerfile: tests/docker/Dockerfile
-    volumes:
-      - ../../tests/results:/app/tests/results
     environment:
       - ITER_TEST_MODE=1
     command: go test -p 1 -v -timeout 120s ./tests/service/...
@@ -29,8 +25,6 @@ services:
     build:
       context: ../..
       dockerfile: tests/docker/Dockerfile
-    volumes:
-      - ../../tests/results:/app/tests/results
     environment:
       - ITER_TEST_MODE=1
     command: go test -p 1 -v -timeout 120s ./tests/api/...
@@ -40,8 +34,6 @@ services:
     build:
       context: ../..
       dockerfile: tests/docker/Dockerfile
-    volumes:
-      - ../../tests/results:/app/tests/results
     environment:
       - ITER_TEST_MODE=1
     command: go test -p 1 -v -timeout 120s ./tests/ui/...
@@ -51,8 +43,6 @@ services:
     build:
       context: ../..
       dockerfile: tests/docker/Dockerfile
-    volumes:
-      - ../../tests/results:/app/tests/results
     environment:
       - ITER_TEST_MODE=1
     command: /bin/bash

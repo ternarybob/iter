@@ -1,6 +1,6 @@
 # iter-test-runner
 
-Run iter-service tests in Docker, analyze failures, fix code, and iterate until tests pass.
+Run iter-service tests in isolated Docker containers, analyze failures, fix code, and iterate until tests pass.
 
 ## Usage
 
@@ -18,17 +18,17 @@ Run iter-service tests in Docker, analyze failures, fix code, and iterate until 
 
 ## Description
 
-This skill runs iter-service integration tests in isolated Docker containers and automatically fixes code issues to make tests pass.
+This skill runs iter-service integration tests in completely isolated Docker containers. No directories are shared between the host and container - results are captured from container stdout/stderr.
 
 **CRITICAL RULES:**
-1. **ALWAYS use Docker** - Tests must run in isolated Docker containers
+1. **ALWAYS use Docker** - Tests run in isolated containers with no shared directories
 2. **NEVER modify test files** - Tests are the source of truth
 3. **Fix only implementation code** - Modify files in `cmd/`, `internal/`, `pkg/`, `web/`
 4. **STOP conditions:**
    - Test structure is invalid (syntax errors, missing imports)
    - Test requirement is impossible (e.g., expects magic behavior)
    - Maximum 5 iterations reached without progress
-5. **Each iteration must save a summary** to `./tests/results/{type}/{datetime}-{testname}/`
+5. **Results captured from stdout** - Container output is captured and parsed
 
 ## Workflow
 
@@ -58,19 +58,25 @@ cd /home/bobmc/development/iter
 
 The test runner will:
 1. Build a fresh Docker image (--no-cache)
-2. Run tests in isolated container
-3. Collect results in `./tests/results/`
+2. Run tests in completely isolated container (no volume mounts)
+3. Capture all output from container stdout/stderr
+4. Parse results and save to `./tests/results/{timestamp}-{suite}/`
 
 ### Step 3: Analyze Results
 
-Parse test output for:
-- PASS: Test passed, create success summary, DONE
+Check the output files:
+- `test-output.log` - Full container output
+- `test-summary.txt` - Extracted test results
+- `summary.json` - JSON summary with pass/fail counts
+
+Parse for:
+- PASS: Test passed, DONE
 - FAIL: Extract failure reason, proceed to fix
 - ERROR: Build/compile error, analyze error
 
 ### Step 4: Create Iteration Summary
 
-Create summary file: `./tests/results/{datetime}-{testname}/iteration-{N}.json`
+After each fix attempt, document in the results directory:
 
 ```json
 {
@@ -86,11 +92,12 @@ Create summary file: `./tests/results/{datetime}-{testname}/iteration-{N}.json`
 
 ### Step 5: Apply Fix
 
-1. Read error message and identify root cause
-2. Locate the source file causing the issue
-3. Apply minimal fix to make test pass
-4. **DO NOT modify test files** (tests/*.go)
-5. Run tests again in Docker
+1. Read error message from test-output.log
+2. Identify root cause from the error
+3. Locate the source file causing the issue
+4. Apply minimal fix to make test pass
+5. **DO NOT modify test files** (tests/*.go)
+6. Run tests again in Docker
 
 ### Step 6: Iterate or Stop
 
@@ -142,10 +149,11 @@ STOP immediately and report if:
 4. Same fix fails 3 times
 5. 5 iterations without progress
 
-## Docker Requirements
+## Docker Isolation
 
-The test runner always uses Docker:
+The test runner provides complete isolation:
 - Fresh container built each run (--no-cache)
+- **No volume mounts** - container is completely isolated from host
 - Tests run sequentially (-p 1) to avoid port conflicts
-- Results mounted to host at `./tests/results/`
-- Isolated from host iter-service processes
+- Results captured from container stdout/stderr
+- Container is removed after tests complete
