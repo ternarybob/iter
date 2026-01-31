@@ -6,8 +6,11 @@ toolchain go1.24.12
 
 require (
 	github.com/fsnotify/fsnotify v1.7.0
+	github.com/go-chi/chi/v5 v5.0.12
+	github.com/go-chi/cors v1.2.1
 	github.com/mark3labs/mcp-go v0.43.2
 	github.com/philippgille/chromem-go v0.6.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -20,5 +23,4 @@ require (
 	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	golang.org/x/sys v0.4.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

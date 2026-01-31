@@ -1,0 +1,57 @@
+{{if not .Projects}}
+<div class="empty-state">
+    <h3>No projects registered</h3>
+    <p>Click "Add Project" to register your first project.</p>
+</div>
+{{else}}
+<div class="project-list">
+    {{range .Projects}}
+    <div class="project-item" id="project-{{.ID}}">
+        <div class="project-info">
+            <h3>{{.Name}}</h3>
+            <div class="project-path">{{.Path}}</div>
+        </div>
+        <div class="project-stats">
+            {{if .IndexStats}}
+            <div class="project-stat">
+                <span>{{.IndexStats.DocumentCount}} symbols</span>
+            </div>
+            <div class="project-stat">
+                <span>{{.IndexStats.FileCount}} files</span>
+            </div>
+            <div class="project-stat">
+                <span class="status">
+                    <span class="status-dot success"></span>
+                    {{.IndexStats.CurrentBranch}}
+                </span>
+            </div>
+            {{else}}
+            <div class="project-stat">
+                <span class="status">
+                    <span class="status-dot warning"></span>
+                    Not indexed
+                </span>
+            </div>
+            {{end}}
+        </div>
+        <div class="project-actions">
+            <a href="/web/project/{{.ID}}" class="btn btn-secondary btn-sm">View</a>
+            <button class="btn btn-secondary btn-sm"
+                    hx-post="/projects/{{.ID}}/index"
+                    hx-target="#project-{{.ID}}"
+                    hx-swap="outerHTML">
+                <span class="htmx-indicator spinner"></span>
+                Reindex
+            </button>
+            <button class="btn btn-danger btn-sm"
+                    hx-delete="/projects/{{.ID}}"
+                    hx-target="#project-{{.ID}}"
+                    hx-swap="outerHTML"
+                    hx-confirm="Are you sure you want to remove this project?">
+                Remove
+            </button>
+        </div>
+    </div>
+    {{end}}
+</div>
+{{end}}

@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>iter-service</title>
+    <link rel="stylesheet" href="/web/static/styles.css">
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+</head>
+<body>
+    <header class="header">
+        <h1>
+            <svg class="logo" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+            </svg>
+            iter-service
+        </h1>
+        <nav>
+            <a href="/" class="active">Projects</a>
+            <a href="/web/settings">Settings</a>
+            <a href="/web/docs">API Docs</a>
+        </nav>
+    </header>
+
+    <main class="container">
+        <div class="card">
+            <div class="card-header">
+                <h2 class="card-title">Projects</h2>
+                <button class="btn btn-primary" onclick="showAddProject()">
+                    + Add Project
+                </button>
+            </div>
+
+            <div id="project-list" hx-get="/api/projects-list" hx-trigger="load">
+                <div class="empty-state">
+                    <div class="spinner"></div>
+                    <p>Loading projects...</p>
+                </div>
+            </div>
+        </div>
+
+        <div id="add-project-modal" class="modal" style="display: none;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Add Project</h3>
+                    <button class="modal-close" onclick="hideAddProject()">&times;</button>
+                </div>
+                <form hx-post="/projects" hx-target="#project-list" hx-swap="innerHTML" onsubmit="hideAddProject()">
+                    <div class="form-group">
+                        <label class="form-label" for="project-path">Project Path</label>
+                        <input type="text"
+                               id="project-path"
+                               name="path"
+                               class="form-input"
+                               placeholder="/path/to/your/project"
+                               required>
+                    </div>
+                    <div style="display: flex; gap: 1rem; justify-content: flex-end;">
+                        <button type="button" class="btn btn-secondary" onclick="hideAddProject()">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Add Project</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        function showAddProject() {
+            document.getElementById('add-project-modal').style.display = 'flex';
+            document.getElementById('project-path').focus();
+        }
+
+        function hideAddProject() {
+            document.getElementById('add-project-modal').style.display = 'none';
+            document.getElementById('project-path').value = '';
+        }
+
+        // Close modal on escape key
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                hideAddProject();
+            }
+        });
+
+        // Close modal on backdrop click
+        document.getElementById('add-project-modal').addEventListener('click', function(e) {
+            if (e.target === this) {
+                hideAddProject();
+            }
+        });
+    </script>
+</body>
+</html>

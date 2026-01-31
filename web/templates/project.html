@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Name}} - iter-service</title>
+    <link rel="stylesheet" href="/web/static/styles.css">
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+</head>
+<body>
+    <header class="header">
+        <h1>
+            <a href="/" style="color: inherit;">
+                <svg class="logo" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+                </svg>
+                iter-service
+            </a>
+        </h1>
+        <nav>
+            <a href="/">Projects</a>
+            <a href="/web/settings">Settings</a>
+            <a href="/web/docs">API Docs</a>
+        </nav>
+    </header>
+
+    <main class="container">
+        <div class="card">
+            <div class="card-header">
+                <div>
+                    <h2 class="card-title">{{.Name}}</h2>
+                    <div class="project-path" style="margin-top: 0.25rem;">{{.Path}}</div>
+                </div>
+                <div class="project-actions">
+                    <button class="btn btn-secondary"
+                            hx-post="/projects/{{.ID}}/index"
+                            hx-target="#stats"
+                            hx-swap="innerHTML">
+                        <span class="htmx-indicator spinner"></span>
+                        Rebuild Index
+                    </button>
+                </div>
+            </div>
+
+            <div id="stats" class="project-stats" style="justify-content: flex-start; margin-bottom: 1.5rem;">
+                {{if .IndexStats}}
+                <div class="project-stat">
+                    <strong>{{.IndexStats.DocumentCount}}</strong> symbols
+                </div>
+                <div class="project-stat">
+                    <strong>{{.IndexStats.FileCount}}</strong> files
+                </div>
+                <div class="project-stat">
+                    <span class="status">
+                        <span class="status-dot success"></span>
+                        {{.IndexStats.CurrentBranch}}
+                    </span>
+                </div>
+                <div class="project-stat">
+                    Last updated: {{.IndexStats.LastUpdated}}
+                </div>
+                {{else}}
+                <div class="project-stat">
+                    <span class="status">
+                        <span class="status-dot warning"></span>
+                        Not indexed
+                    </span>
+                </div>
+                {{end}}
+            </div>
+        </div>
+
+        <div class="card">
+            <h3 class="card-title" style="margin-bottom: 1rem;">Search</h3>
+            <form class="search-form"
+                  hx-post="/projects/{{.ID}}/search"
+                  hx-target="#search-results"
+                  hx-swap="innerHTML">
+                <input type="text"
+                       name="query"
+                       class="form-input search-input"
+                       placeholder="Search for functions, types, symbols..."
+                       required>
+                <select name="kind" class="form-input" style="width: auto;">
+                    <option value="">All kinds</option>
+                    <option value="function">Functions</option>
+                    <option value="method">Methods</option>
+                    <option value="type">Types</option>
+                    <option value="const">Constants</option>
+                </select>
+                <button type="submit" class="btn btn-primary">
+                    <span class="htmx-indicator spinner"></span>
+                    Search
+                </button>
+            </form>
+
+            <div id="search-results" class="search-results">
+                <div class="empty-state">
+                    <p>Enter a search query to find code.</p>
+                </div>
+            </div>
+        </div>
+    </main>
+</body>
+</html>

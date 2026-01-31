@@ -1,0 +1,23 @@
+{{if not .Results}}
+<div class="empty-state">
+    <p>No results found for "{{.Query}}"</p>
+</div>
+{{else}}
+<p style="color: var(--text-muted); margin-bottom: 1rem;">
+    Found {{.Total}} results for "{{.Query}}"
+</p>
+{{range .Results}}
+<div class="search-result">
+    <div class="search-result-header">
+        <span class="search-result-symbol">{{.SymbolName}}</span>
+        <span class="search-result-kind">{{.SymbolKind}}</span>
+    </div>
+    <div class="search-result-location">
+        {{.FilePath}}:{{.StartLine}}-{{.EndLine}}
+    </div>
+    {{if .Signature}}
+    <div class="search-result-signature">{{.Signature}}</div>
+    {{end}}
+</div>
+{{end}}
+{{end}}
