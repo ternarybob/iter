@@ -510,6 +510,7 @@ func parseUnifiedArgs(args []string) (mode, modeArg, description string, remaini
 		"deps":               true,
 		"impact":             true,
 		"history":            true,
+		"mcp-server":         true,
 	}
 
 	if internalCommands[first] {
@@ -585,6 +586,8 @@ func main() {
 		err = cmdImpact(remaining)
 	case "history":
 		err = cmdHistory(remaining)
+	case "mcp-server":
+		err = cmdMCPServer(remaining)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown mode: %s\n", mode)
 		printUsage()
@@ -2493,4 +2496,28 @@ func cmdHistory(args []string) error {
 	fmt.Println(index.FormatHistory(summaries))
 
 	return nil
+}
+
+// cmdMCPServer starts the MCP server on stdio.
+func cmdMCPServer(args []string) error {
+	// Check for GEMINI_API_KEY
+	if os.Getenv("GEMINI_API_KEY") == "" {
+		fmt.Fprintf(os.Stderr, "[iter-index] Warning: GEMINI_API_KEY not set.\n")
+		fmt.Fprintf(os.Stderr, "[iter-index] LLM features (commit summaries) disabled.\n")
+		fmt.Fprintf(os.Stderr, "[iter-index] Set GEMINI_API_KEY environment variable to enable.\n")
+	}
+
+	// Detect project root
+	repoRoot := findProjectRoot()
+	cfg := index.DefaultConfig(repoRoot)
+
+	// Create indexer
+	idx, err := ensureIndex(cfg)
+	if err != nil {
+		return fmt.Errorf("create indexer: %w", err)
+	}
+
+	// Create and start MCP server
+	mcpServer := index.NewMCPServer(idx)
+	return mcpServer.ServeStdio()
 }

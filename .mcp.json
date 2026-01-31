@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "iter-index": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/iter",
+      "args": ["mcp-server"],
+      "env": {
+        "GEMINI_API_KEY": "${GEMINI_API_KEY}"
+      }
+    }
+  }
+}

@@ -1,6 +1,6 @@
 {
   "name": "iter",
-  "version": "2.1.20260128-0747",
+  "version": "2.1.20260128-1647",
   "description": "Adversarial iterative implementation for Claude Code - structured loop until requirements/tests pass",
   "author": {
     "name": "ternarybob"

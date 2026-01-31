@@ -1,20 +1,31 @@
 # Iter
 
-**Iter** is a Claude Code plugin for adversarial iterative implementation. It provides a structured loop that iterates until requirements and tests pass.
+**Iter** is a Claude Code plugin for adversarial iterative implementation. It provides a structured loop that iterates until requirements and tests pass, with semantic code indexing for intelligent code discovery.
 
 ## Features
 
 - **Self-contained binary**: All prompts and logic embedded in Go binary
 - **Adversarial validation**: Default stance is REJECT - find problems
 - **Structured iteration**: Architect → Worker → Validator loop
+- **Semantic code index**: DAG-based dependency tracking and search
+- **Auto-activation**: `/iter` shortcut and `CLAUDE.md` auto-installed on session start
 - **Exit blocking**: Session continues until complete or max iterations
 
 ## Installation
 
 ### Prerequisites
 
-- Go 1.22+
+- Go 1.23+
 - Claude Code CLI
+
+### Environment Variables (Optional)
+
+```bash
+# For LLM-powered commit summaries (optional)
+export GEMINI_API_KEY=your-api-key-here
+```
+
+The `GEMINI_API_KEY` enables LLM-generated commit summaries in the `history` command and MCP server. Without it, commit messages are used as summaries instead.
 
 ### Build
 
@@ -65,150 +76,160 @@ claude plugin marketplace remove iter-local
 | Command | Description |
 |---------|-------------|
 | `/iter "<task>"` | Start iterative implementation |
-| `/iter:workflow "<spec>"` | Start workflow-based implementation |
-| `/iter:test <test-file> [tests...]` | Run tests with auto-fix iteration (max 10x) |
-| `/iter:index` | Manage the code index (status, build, clear, watch) |
-| `/iter:search "<query>"` | Search indexed code (semantic/keyword search) |
-| `/iter:install` | Install `/iter` shortcut wrapper |
+| `/iter -t:<file> [tests...]` | Test-driven iteration with auto-fix (max 10x) |
+| `/iter -w:<file> <description>` | Start workflow from markdown file |
+| `/iter -r` | Rebuild the code index |
+| `/iter -v` | Show version |
 
-## Skills
+### Code Discovery Commands
 
-Iter provides six specialized skills for different aspects of iterative development:
+| Command | Description |
+|---------|-------------|
+| `/iter search "<query>"` | Semantic code search |
+| `/iter deps "<symbol>"` | Show what symbol depends on and what depends on it |
+| `/iter impact "<file>"` | Show what's affected by file changes |
+| `/iter history [N]` | Show commit history with summaries (default: 10) |
 
-### /iter:run - Core Iterative Implementation
+### Session Management
 
-The main skill for implementing features, fixing bugs, and refactoring code with high quality standards.
+| Command | Description |
+|---------|-------------|
+| `iter status` | Show current session status |
+| `iter pass` | Record validation pass |
+| `iter reject "<reason>"` | Record validation rejection |
+| `iter next` | Move to next step |
+| `iter complete` | Finalize session (merges worktree) |
+| `iter reset` | Abort session |
 
-**Purpose**: Execute a structured three-phase workflow (ARCHITECT → WORKER → VALIDATOR) that iterates until all requirements and tests pass.
+### Index Management
 
-**When to use**:
-- Implementing new features
-- Fixing bugs
-- Refactoring code
-- Any code changes requiring high quality
+| Command | Description |
+|---------|-------------|
+| `iter index` | Show index status |
+| `iter index build` | Build/rebuild the full code index |
+| `iter index clear` | Clear and rebuild the index |
+| `iter index daemon` | Start background daemon (auto-detaches) |
+| `iter index daemon status` | Check if daemon is running |
+| `iter index daemon stop` | Stop the daemon gracefully |
 
-**Key features**:
-- Adversarial validation (default: REJECT)
-- Task management for ordered execution
-- Git worktree isolation
-- Requirements traceability
-- Automatic cleanup enforcement
+## MCP Server
 
-**Example**: `/iter:run "add health check endpoint at /health"`
+Iter includes an MCP (Model Context Protocol) server that exposes the code index to Claude Code as native tools.
 
-[→ Full documentation](skills/run/README.md)
+### Starting the MCP Server
 
-### /iter:workflow - Custom Workflow Execution
+The MCP server runs on stdio and is automatically configured via `.mcp.json`:
 
-Execute custom workflow specifications for specialized iterative processes.
+```bash
+# Manual start (for testing)
+iter mcp-server
+```
 
-**Purpose**: Run domain-specific workflows with custom phases, priorities, and success criteria beyond the standard implementation pattern.
+### Available MCP Tools
 
-**When to use**:
-- Service stabilization and debugging
-- Performance optimization
-- Multi-iteration system tuning
-- Custom iteration logic with specific priority rules
+| Tool | Description |
+|------|-------------|
+| `search` | Semantic code search with filters |
+| `deps` | Get dependencies of a symbol |
+| `dependents` | Get dependents of a symbol |
+| `impact` | Change impact analysis for a file |
+| `history` | Commit history with summaries |
+| `stats` | Index statistics |
+| `reindex` | Trigger full reindex |
 
-**Key features**:
-- Custom workflow specifications (from file or inline)
-- Priority-based issue selection
-- Multi-phase iteration (ARCHITECT/WORKER/VALIDATOR/COMPLETE)
-- Configurable iteration limits and stabilization periods
-- Comprehensive documentation per iteration
+### MCP Configuration
 
-**Example**: `/iter:workflow docs/stabilize-services.md`
+The `.mcp.json` file in the project root registers the MCP server:
 
-[→ Full documentation](skills/workflow/README.md)
+```json
+{
+  "mcpServers": {
+    "iter-index": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/iter",
+      "args": ["mcp-server"],
+      "env": {
+        "GEMINI_API_KEY": "${GEMINI_API_KEY}"
+      }
+    }
+  }
+}
+```
 
-### /iter:test - Test-Driven Iteration
+### Verifying MCP Tools
 
-Run Go tests with automated fix iteration until tests pass.
+In Claude Code, use `/mcp` to verify the iter-index tools are available.
 
-**Purpose**: Execute tests, analyze failures, implement fixes, and retry up to 10 times with intelligent problem-solving.
+## Auto-Activation
 
-**When to use**:
-- Running flaky or failing tests
-- Debugging test failures
-- Test-driven development
-- Automated test fixing
+When iter is installed, the following happens automatically on session start:
 
-**Key features**:
-- Git worktree isolation - changes merged on success (no push)
-- NEVER modifies test files - tests are source of truth
-- Advises when test configuration appears incorrect
-- Root cause identification and targeted fix implementation
-- Max 10 iterations per test run
-- Complete documentation of attempts
+1. **Index daemon starts** in background for semantic code search
+2. **CLAUDE.md generated** at repo root with iter default process
+3. **/iter shortcut installed** in `~/.claude/skills/iter/`
 
-**Example**: `/iter:test tests/docker/plugin_test.go TestPluginInstallation`
+No manual setup required - just install the plugin and use `/iter`.
 
-[→ Full documentation](skills/test/README.md)
+## Index-First Code Discovery
 
-### /iter:index - Code Index Management
+**ALWAYS use the semantic index before grep or file search:**
 
-Manage the code index used for semantic and keyword search.
+```bash
+iter search "<query>"     # Semantic code search (understands code structure)
+iter deps "<symbol>"      # Show dependencies and dependents
+iter impact "<file>"      # Show change impact analysis
+iter history [N]          # Show commit history with summaries
+```
 
-**Purpose**: Build, monitor, and maintain a searchable index of your codebase for fast code navigation.
+The semantic index provides more accurate results than grep by understanding:
 
-**When to use**:
-- Before using `/iter:search`
-- After significant code changes
-- To check index freshness
-- Setting up search functionality
+- **Function call graphs** - who calls whom
+- **Import/export relationships** - module dependencies
+- **Type implementations** - interface implementers
+- **Change propagation paths** - impact analysis
+- **Commit lineage** - LLM-generated summaries of changes
 
-**Commands**:
-- `status` - Show index state and statistics
-- `build` - Create or rebuild the index
-- `clear` - Remove index data
-- `watch` - Auto-update index on file changes
+### DAG (Dependency Graph)
 
-**Example**: `/iter:index build`
+The code index builds a directed acyclic graph tracking:
 
-[→ Full documentation](skills/index/README.md)
+- **Calls**: Function/method call relationships
+- **Imports**: Package/module imports
+- **Types**: Type definitions and implementations
+- **References**: Symbol usage across files
 
-### /iter:search - Code Search
+### Lineage Tracking
 
-Search your indexed codebase using semantic or keyword search.
+Commit history is analyzed and summarized:
 
-**Purpose**: Find relevant code locations with context using natural language queries or specific identifiers.
+- Recent commits with LLM-generated summaries
+- Change context for understanding code evolution
+- Impact of historical changes on current code
 
-**When to use**:
-- Exploring unfamiliar code
-- Finding all instances of a concept
-- Understanding system architecture
-- Locating functions/classes/patterns
+## Modes
 
-**Key features**:
-- Semantic search (understands meaning)
-- Keyword search (exact/fuzzy matching)
-- Ranked results with context
-- File paths and line numbers
-- Requires index built via `/iter:index`
+### Run Mode (Default)
 
-**Example**: `/iter:search "user authentication logic"`
+Structured implementation with ARCHITECT → WORKER → VALIDATOR loop.
 
-[→ Full documentation](skills/search/README.md)
+```bash
+/iter "add health check endpoint"
+```
 
-### /iter:install - Shortcut Installation
+### Test Mode
 
-Create a wrapper that allows using `/iter` instead of `/iter:run`.
+Test-driven iteration with auto-fix (max 10 iterations).
 
-**Purpose**: One-time setup to install a convenient shortcut for the main iterative implementation skill.
+```bash
+/iter -t:tests/docker/plugin_test.go TestPluginInstallation
+```
 
-**When to use**:
-- After installing the iter plugin
-- When you want shorter command syntax
-- First-time setup
+### Workflow Mode
 
-**What it does**:
-- Creates wrapper skill in `~/.claude/skills/iter/`
-- Delegates to `/iter:run` automatically
-- Works on Linux, macOS, WSL, and Windows
+Custom workflow specifications for specialized iterative processes.
 
-**Post-installation**: Use `/iter "task"` instead of `/iter:run "task"`
-
-[→ Full documentation](skills/install/README.md)
+```bash
+/iter -w:workflow.md include docker logs in results
+```
 
 ## How It Works
 
@@ -241,7 +262,7 @@ The Validator assumes ALL implementations are wrong until proven correct:
 
 ## Git Worktree Isolation
 
-All code-modifying skills (`/iter:run`, `/iter:workflow`, `/iter:test`) use git worktree isolation:
+All code-modifying modes (`/iter`, `/iter -w:`, `/iter -t:`) use git worktree isolation:
 
 - **Isolated workspace**: Changes are made in a separate worktree branch
 - **Safe iteration**: Original branch is not affected during execution
@@ -269,17 +290,17 @@ Created in `.iter/workdir/{timestamp}-{slug}/`:
 
 ## Test-Driven Iteration
 
-The `/iter:test` command runs tests with automated fix iteration (max 10 attempts):
+The `/iter -t:` command runs tests with automated fix iteration (max 10 attempts):
 
 ```bash
 # Run specific test with auto-fix
-/iter:test tests/docker/plugin_test.go TestPluginInstallation
+/iter -t:tests/docker/plugin_test.go TestPluginInstallation
 
 # Run multiple tests
-/iter:test tests/docker/iter_command_test.go TestIterRunCommandLine TestIterRunInteractive
+/iter -t:tests/docker/iter_command_test.go TestIterRunCommandLine TestIterRunInteractive
 
 # Run all tests in file
-/iter:test tests/docker/plugin_test.go
+/iter -t:tests/docker/plugin_test.go
 ```
 
 ### How It Works
@@ -311,7 +332,7 @@ Session state in `.iter/workdir/{timestamp}-test-{slug}/`
 ### Example
 
 ```
-/iter:test tests/docker/plugin_test.go TestPluginInstallation
+/iter -t:tests/docker/plugin_test.go TestPluginInstallation
 
 → Iteration 1: FAIL
   Error: Docker image build failed
@@ -342,7 +363,7 @@ go test ./cmd/iter/... -v
 
 ### Run Docker Integration Tests
 
-Docker tests verify `/iter:run` works in Claude. **Requires API key.**
+Docker tests verify `/iter` works in Claude. **Requires API key.**
 
 ```bash
 # Setup: Copy .env.example and add your API key
@@ -354,9 +375,9 @@ go test ./tests/docker/... -v
 ```
 
 **Docker Tests:**
-1. `TestDockerPluginInstallation` - Full installation and `/iter:run` test
-2. `TestIterRunCommandLine` - Tests `claude -p '/iter:run -v'`
-3. `TestIterRunInteractive` - Tests `/iter:run -v` in interactive session
+1. `TestDockerPluginInstallation` - Full installation and `/iter` test
+2. `TestIterRunCommandLine` - Tests `claude -p '/iter -v'`
+3. `TestIterRunInteractive` - Tests `/iter -v` in interactive session
 
 ### Test Results
 
@@ -391,17 +412,32 @@ claude plugin list
 
 ```
 iter/
+├── .mcp.json                    # MCP server registration
 ├── config/
 │   ├── plugin.json              # Plugin manifest template
 │   └── marketplace.json         # Marketplace manifest template
-├── skills/                      # Skill definitions (source)
-│   ├── run/SKILL.md             # Core iterative implementation
-│   ├── workflow/SKILL.md        # Custom workflow execution
-│   ├── test/SKILL.md            # Test-driven iteration
-│   ├── index/SKILL.md           # Code index management
-│   ├── search/SKILL.md          # Code search
-│   └── install/SKILL.md         # Shortcut installation
-├── hooks/hooks.json             # Stop hook
+├── skills/
+│   └── iter/SKILL.md            # Unified iter skill (all modes)
+├── index/                       # Code indexing package
+│   ├── index.go                 # Core indexer
+│   ├── search.go                # Search functionality
+│   ├── dag.go                   # Dependency graph
+│   ├── dag_parser.go            # AST parsing for DAG
+│   ├── lineage.go               # Commit history tracking
+│   ├── llm.go                   # LLM integration for summaries
+│   ├── mcp_server.go            # MCP server implementation
+│   ├── watcher.go               # File change watcher
+│   ├── parser.go                # Symbol extraction
+│   └── types.go                 # Type definitions
+├── prompts/                     # Embedded prompt templates
+│   ├── system.md                # System rules
+│   ├── architect.md             # Architect role
+│   ├── worker.md                # Worker role
+│   └── validator.md             # Validator role
+├── templates/
+│   └── CLAUDE.md.tmpl           # CLAUDE.md template
+├── hooks/hooks.json             # Stop/SessionStart/PreToolUse hooks
+├── embed.go                     # Go embed for prompts/templates
 ├── cmd/iter/main.go             # Binary source (all logic here)
 ├── scripts/build.sh             # Build script
 └── bin/                         # Build output (plugin root)
