@@ -32,6 +32,7 @@ type TestEnv struct {
 	LogFile    *os.File
 	mu         sync.Mutex
 	started    bool
+	external   bool // true if using external service via ITER_BASE_URL
 }
 
 // portCounter is used to allocate unique ports for each test.
@@ -81,6 +82,9 @@ func getProjectRoot() string {
 // The environment includes its own data directory, config file, and port.
 // testType should be "api", "service", or "ui".
 // testName is the specific test name (e.g., "project-crud").
+//
+// If ITER_BASE_URL environment variable is set, the test will use an external
+// service instead of starting its own. This is useful for Docker-based testing.
 func NewTestEnv(t *testing.T, testType, testName string) *TestEnv {
 	t.Helper()
 
@@ -98,6 +102,23 @@ func NewTestEnv(t *testing.T, testType, testName string) *TestEnv {
 		t.Fatalf("Failed to create data directory: %v", err)
 	}
 
+	// Check for external service URL
+	externalURL := os.Getenv("ITER_BASE_URL")
+	if externalURL != "" {
+		env := &TestEnv{
+			T:          t,
+			Name:       testName,
+			Type:       testType,
+			DataDir:    dataDir,
+			ResultsDir: resultsDir,
+			Port:       0,
+			BaseURL:    externalURL,
+			external:   true,
+		}
+		t.Logf("Using external service at %s", externalURL)
+		return env
+	}
+
 	port := allocatePort()
 
 	env := &TestEnv{
@@ -109,6 +130,7 @@ func NewTestEnv(t *testing.T, testType, testName string) *TestEnv {
 		ResultsDir: resultsDir,
 		Port:       port,
 		BaseURL:    fmt.Sprintf("http://127.0.0.1:%d", port),
+		external:   false,
 	}
 
 	// Write test config file
@@ -149,12 +171,23 @@ watch_enabled = true
 }
 
 // Start starts the iter-service for this test environment.
+// If using an external service (ITER_BASE_URL), this just verifies connectivity.
 func (e *TestEnv) Start() error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
 	if e.started {
 		return fmt.Errorf("service already started")
+	}
+
+	// If using external service, just verify it's reachable
+	if e.external {
+		if err := e.waitForReady(10 * time.Second); err != nil {
+			return fmt.Errorf("external service not ready at %s: %w", e.BaseURL, err)
+		}
+		e.started = true
+		e.Log("Using external service at %s", e.BaseURL)
+		return nil
 	}
 
 	// Find the binary
@@ -216,9 +249,16 @@ func (e *TestEnv) waitForReady(timeout time.Duration) error {
 }
 
 // Stop stops the iter-service.
+// If using an external service, this is a no-op.
 func (e *TestEnv) Stop() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+
+	// Don't stop external services
+	if e.external {
+		e.started = false
+		return
+	}
 
 	if e.Cmd != nil && e.Cmd.Process != nil {
 		e.Cmd.Process.Signal(os.Interrupt)
@@ -302,13 +342,13 @@ func (e *TestEnv) SaveScreenshot(name string, html []byte) error {
 // WriteSummary writes a test summary to the results directory.
 func (e *TestEnv) WriteSummary(passed bool, duration time.Duration, details string) error {
 	summary := map[string]interface{}{
-		"test_name":  e.Name,
-		"passed":     passed,
-		"duration":   duration.String(),
-		"timestamp":  time.Now().Format(time.RFC3339),
-		"port":       e.Port,
-		"data_dir":   e.DataDir,
-		"details":    details,
+		"test_name": e.Name,
+		"passed":    passed,
+		"duration":  duration.String(),
+		"timestamp": time.Now().Format(time.RFC3339),
+		"port":      e.Port,
+		"data_dir":  e.DataDir,
+		"details":   details,
 	}
 	return e.SaveJSON("summary.json", summary)
 }
@@ -344,8 +384,8 @@ func findBinary() string {
 
 // HTTPClient returns an HTTP client for making API requests.
 type HTTPClient struct {
-	env     *TestEnv
-	client  *http.Client
+	env    *TestEnv
+	client *http.Client
 }
 
 // NewHTTPClient creates an HTTP client for the test environment.

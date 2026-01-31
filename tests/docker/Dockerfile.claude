@@ -1,0 +1,65 @@
+# Dockerfile for Claude test runner
+# Contains Claude CLI, Go test tools, and Chrome for screenshots
+
+FROM golang:1.24-bookworm
+
+# Install dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    ca-certificates \
+    git \
+    chromium \
+    fonts-liberation \
+    libnss3 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libdrm2 \
+    libxkbcommon0 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxfixes3 \
+    libxrandr2 \
+    libgbm1 \
+    libasound2 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user (required for Claude CLI)
+RUN useradd -m -s /bin/bash testuser \
+    && echo "testuser ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
+# Switch to testuser for Claude installation
+USER testuser
+WORKDIR /home/testuser
+
+# Install Claude CLI
+RUN curl -fsSL https://claude.ai/install.sh | bash
+ENV PATH="/home/testuser/.local/bin:$PATH"
+
+# Create directories for test artifacts
+RUN mkdir -p /home/testuser/results /home/testuser/scripts
+
+# Switch back to root for Go setup
+USER root
+
+WORKDIR /app
+
+# Copy Go modules first for caching
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build test binaries
+RUN go test -c -o /app/bin/mcp.test ./tests/mcp/... 2>/dev/null || true
+RUN go test -c -o /app/bin/api.test ./tests/api/... 2>/dev/null || true
+
+# Set ownership
+RUN chown -R testuser:testuser /app /home/testuser
+
+USER testuser
+WORKDIR /home/testuser
+
+# Default command keeps container running
+CMD ["tail", "-f", "/dev/null"]

@@ -21,14 +21,10 @@ mkdir -p "$INSTALL_DIR"
 mkdir -p "$SERVICE_DIR"
 mkdir -p "$DATA_DIR"
 
-# Build the binary
+# Build the binary directly to install location
 echo "Building iter-service..."
 cd "$(dirname "$0")/.."
-go build -ldflags "-X main.version=$(cat .version 2>/dev/null || echo dev)" -o iter-service ./cmd/iter-service
-
-# Install binary
-echo "Installing binary to $INSTALL_DIR..."
-cp iter-service "$INSTALL_DIR/"
+go build -ldflags "-X main.version=$(cat .version 2>/dev/null || echo dev)" -o "$INSTALL_DIR/iter-service" ./cmd/iter-service
 chmod +x "$INSTALL_DIR/iter-service"
 
 # Check if $INSTALL_DIR is in PATH

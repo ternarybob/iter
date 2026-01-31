@@ -1,66 +1,41 @@
 # Docker Compose for iter-service testing
-# Results directory is mounted to persist screenshots and test artifacts
+# Two containers: iter-service server and Claude test runner
+# No volume mounts to repo - files are copied in/out
 
 services:
-  # Run all tests (default)
-  test:
+  # iter-service server - runs the API and MCP endpoints
+  iter:
     build:
       context: ../..
-      dockerfile: tests/docker/Dockerfile
+      dockerfile: tests/docker/Dockerfile.iter
+    container_name: iter-server
+    ports:
+      - "19000:19000"
     environment:
       - ITER_TEST_MODE=1
+      - ITER_PORT=19000
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:19000/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Claude test runner - executes tests against iter server
+  claude:
+    build:
+      context: ../..
+      dockerfile: tests/docker/Dockerfile.claude
+    container_name: claude-runner
+    depends_on:
+      iter:
+        condition: service_healthy
+    environment:
+      - ITER_BASE_URL=http://iter:19000
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - HOME=/home/testuser
       - CHROME_BIN=/usr/bin/chromium
       - CHROMEDP_NO_SANDBOX=true
-    volumes:
-      - ../results:/app/tests/results
-    command: go test -p 1 -v -timeout 300s ./tests/...
-
-  # Run service tests only
-  test-service:
-    build:
-      context: ../..
-      dockerfile: tests/docker/Dockerfile
-    environment:
-      - ITER_TEST_MODE=1
-    volumes:
-      - ../results:/app/tests/results
-    command: go test -p 1 -v -timeout 120s ./tests/service/...
-
-  # Run API tests only
-  test-api:
-    build:
-      context: ../..
-      dockerfile: tests/docker/Dockerfile
-    environment:
-      - ITER_TEST_MODE=1
-    volumes:
-      - ../results:/app/tests/results
-    command: go test -p 1 -v -timeout 120s ./tests/api/...
-
-  # Run UI tests only
-  test-ui:
-    build:
-      context: ../..
-      dockerfile: tests/docker/Dockerfile
-    environment:
-      - ITER_TEST_MODE=1
-      - CHROME_BIN=/usr/bin/chromium
-      - CHROMEDP_NO_SANDBOX=true
-    volumes:
-      - ../results:/app/tests/results
-    command: go test -p 1 -v -timeout 120s ./tests/ui/...
-
-  # Interactive shell for debugging
-  shell:
-    build:
-      context: ../..
-      dockerfile: tests/docker/Dockerfile
-    environment:
-      - ITER_TEST_MODE=1
-      - CHROME_BIN=/usr/bin/chromium
-      - CHROMEDP_NO_SANDBOX=true
-    volumes:
-      - ../results:/app/tests/results
-    command: /bin/bash
+    # Keep container running for test execution
+    command: tail -f /dev/null
     stdin_open: true
     tty: true

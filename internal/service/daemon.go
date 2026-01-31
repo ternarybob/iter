@@ -4,7 +4,6 @@ package service
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -15,16 +14,16 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ternarybob/arbor"
 	"github.com/ternarybob/iter/internal/config"
+	"github.com/ternarybob/iter/internal/logger"
 )
-
 
 // Daemon manages the service lifecycle.
 type Daemon struct {
 	cfg       *config.Config
 	server    *http.Server
-	logger    *log.Logger
-	logFile   *os.File
+	logger    arbor.ILogger
 	stopCh    chan struct{}
 	stoppedCh chan struct{}
 	mu        sync.Mutex
@@ -55,10 +54,8 @@ func (d *Daemon) Start(handler http.Handler) error {
 		return fmt.Errorf("ensure directories: %w", err)
 	}
 
-	// Set up logging
-	if err := d.setupLogging(); err != nil {
-		return fmt.Errorf("setup logging: %w", err)
-	}
+	// Set up logging using arbor
+	d.logger = logger.SetupLogger(d.cfg)
 
 	// Write PID file
 	if err := d.writePID(); err != nil {
@@ -76,9 +73,9 @@ func (d *Daemon) Start(handler http.Handler) error {
 
 	// Start server in goroutine
 	go func() {
-		d.logger.Printf("Starting server on %s", d.cfg.Address())
+		d.logger.Info().Str("address", d.cfg.Address()).Msg("Starting server")
 		if err := d.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			d.logger.Printf("Server error: %v", err)
+			d.logger.Error().Err(err).Msg("Server error")
 		}
 	}()
 
@@ -92,9 +89,9 @@ func (d *Daemon) Wait() {
 
 	select {
 	case sig := <-sigCh:
-		d.logger.Printf("Received signal %v, shutting down...", sig)
+		d.logger.Info().Str("signal", sig.String()).Msg("Received signal, shutting down")
 	case <-d.stopCh:
-		d.logger.Println("Stop requested, shutting down...")
+		d.logger.Info().Msg("Stop requested, shutting down")
 	}
 
 	d.shutdown()
@@ -128,40 +125,18 @@ func (d *Daemon) shutdown() {
 
 	if d.server != nil {
 		if err := d.server.Shutdown(ctx); err != nil {
-			d.logger.Printf("Server shutdown error: %v", err)
+			d.logger.Error().Err(err).Msg("Server shutdown error")
 		}
 	}
 
 	// Remove PID file
 	d.removePID()
 
-	// Close log file
-	if d.logFile != nil {
-		d.logFile.Close()
-	}
+	// Stop logger (flush pending logs)
+	logger.Stop()
 
 	d.running = false
 	close(d.stoppedCh)
-}
-
-// setupLogging configures logging for the daemon.
-func (d *Daemon) setupLogging() error {
-	logPath := d.cfg.LogPath()
-
-	// Ensure log directory exists
-	if err := os.MkdirAll(filepath.Dir(logPath), 0755); err != nil {
-		return fmt.Errorf("create log directory: %w", err)
-	}
-
-	// Open log file
-	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		return fmt.Errorf("open log file: %w", err)
-	}
-	d.logFile = f
-
-	d.logger = log.New(f, "[iter-service] ", log.LstdFlags|log.Lshortfile)
-	return nil
 }
 
 // writePID writes the current process PID to a file.
@@ -246,6 +221,6 @@ func StopRunning(cfg *config.Config) error {
 }
 
 // Logger returns the daemon's logger.
-func (d *Daemon) Logger() *log.Logger {
+func (d *Daemon) Logger() arbor.ILogger {
 	return d.logger
 }

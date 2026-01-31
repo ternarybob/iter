@@ -1,0 +1,36 @@
+# iter-service Docker Compose configuration
+#
+# Usage (from project root):
+#   docker compose -f deployments/docker/docker-compose.yml up -d
+#   docker compose -f deployments/docker/docker-compose.yml logs -f
+#   docker compose -f deployments/docker/docker-compose.yml down
+#
+# Data is persisted in the 'iter-data' volume
+
+services:
+  iter-service:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile
+      args:
+        VERSION: ${VERSION:-dev}
+    image: iter-service:latest
+    container_name: iter-service
+    restart: unless-stopped
+    ports:
+      - "8420:8420"
+    volumes:
+      - iter-data:/data
+      - ${CONFIG_FILE:-../config.toml}:/data/config.toml:ro
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8420/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  iter-data:
+    name: iter-service-data

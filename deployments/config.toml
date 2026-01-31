@@ -1,0 +1,21 @@
+# iter-service configuration
+# Only add settings you want to override from defaults
+# All values below are optional - defaults are set in code
+#
+# Environment variables can be used: ${VAR_NAME}
+# Paths support ~ expansion: ~/path/to/file
+
+# Uncomment sections as needed:
+
+# [service]
+# port = 8420
+# host = "127.0.0.1"
+
+# [llm]
+# api_key = "${GEMINI_API_KEY}"
+
+# [logging]
+# level = "info"
+# format = "text"                    # text or json
+# output = ["file", "stdout"]        # array of: file, stdout
+# time_format = "15:04:05.000"       # Go time format

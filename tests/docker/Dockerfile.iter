@@ -1,0 +1,36 @@
+# Dockerfile for iter-service server
+# Minimal image that runs the iter-service API and MCP endpoints
+
+FROM golang:1.24-bookworm AS builder
+
+WORKDIR /build
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+RUN CGO_ENABLED=0 go build -o iter-service ./cmd/iter-service
+
+# Runtime image
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy binary
+COPY --from=builder /build/iter-service /app/iter-service
+
+# Create data directory
+RUN mkdir -p /app/data
+
+# Write container config (bind to 0.0.0.0 for container networking)
+RUN printf '[service]\nhost = "0.0.0.0"\nport = 19000\ndata_dir = "/app/data"\n\n[api]\nenabled = true\n\n[mcp]\nenabled = true\n\n[logging]\nlevel = "debug"\nformat = "text"\noutput = "stdout"\n' > /app/config.toml
+
+# Expose port
+EXPOSE 19000
+
+# Run service
+CMD ["/app/iter-service", "--config", "/app/config.toml"]

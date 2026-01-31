@@ -13,10 +13,10 @@ import (
 
 // Browser provides chromedp-based browser automation for UI tests.
 type Browser struct {
-	env       *TestEnv
-	ctx       context.Context
-	cancel    context.CancelFunc
-	allocCtx  context.Context
+	env         *TestEnv
+	ctx         context.Context
+	cancel      context.CancelFunc
+	allocCtx    context.Context
 	allocCancel context.CancelFunc
 }
 
@@ -103,6 +103,20 @@ func (b *Browser) Navigate(path string) error {
 		chromedp.WaitReady("body"),
 	); err != nil {
 		return fmt.Errorf("navigate to %s: %w", path, err)
+	}
+
+	return nil
+}
+
+// NavigateAbsolute navigates to an absolute URL (including file:// URLs).
+func (b *Browser) NavigateAbsolute(url string) error {
+	b.env.Log("Navigating to: %s", url)
+
+	if err := chromedp.Run(b.ctx,
+		chromedp.Navigate(url),
+		chromedp.WaitReady("body"),
+	); err != nil {
+		return fmt.Errorf("navigate to %s: %w", url, err)
 	}
 
 	return nil

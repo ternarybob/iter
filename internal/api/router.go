@@ -8,23 +8,26 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 	"github.com/ternarybob/iter/internal/config"
+	"github.com/ternarybob/iter/internal/mcp"
 	"github.com/ternarybob/iter/internal/project"
 )
 
 // Server represents the API server.
 type Server struct {
-	cfg      *config.Config
-	router   chi.Router
-	registry *project.Registry
-	manager  *project.Manager
+	cfg        *config.Config
+	router     chi.Router
+	registry   *project.Registry
+	manager    *project.Manager
+	mcpHandler *mcp.Handler
 }
 
 // NewServer creates a new API server.
 func NewServer(cfg *config.Config, registry *project.Registry, manager *project.Manager) *Server {
 	s := &Server{
-		cfg:      cfg,
-		registry: registry,
-		manager:  manager,
+		cfg:        cfg,
+		registry:   registry,
+		manager:    manager,
+		mcpHandler: mcp.NewHandler(cfg, registry, manager),
 	}
 
 	s.setupRouter()
@@ -83,6 +86,13 @@ func (s *Server) setupRouter() {
 	// Web UI routes (served from /web)
 	r.Get("/", s.handleWebRoot)
 	r.Get("/web/*", s.handleWebAssets)
+
+	// MCP protocol routes
+	if s.cfg.MCP.Enabled {
+		r.Handle("/mcp/v1", s.mcpHandler)
+		r.Handle("/mcp/v1/*", s.mcpHandler)
+		r.Handle("/mcp/sse", s.mcpHandler)
+	}
 
 	s.router = r
 }

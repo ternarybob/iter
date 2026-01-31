@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -45,40 +46,65 @@ type APIConfig struct {
 
 // MCPConfig contains MCP server settings.
 type MCPConfig struct {
-	Enabled       bool `toml:"enabled"`
+	Enabled        bool `toml:"enabled"`
 	AutoBuildIndex bool `toml:"auto_build_index"`
 }
 
 // LLMConfig contains LLM integration settings.
 type LLMConfig struct {
-	Provider     string `toml:"provider"`
-	APIKey       string `toml:"api_key"`
-	Model        string `toml:"model"`
-	MaxTokens    int    `toml:"max_tokens"`
-	Temperature  float64 `toml:"temperature"`
-	TimeoutSecs  int    `toml:"timeout_seconds"`
+	Provider    string  `toml:"provider"`
+	APIKey      string  `toml:"api_key"`
+	Model       string  `toml:"model"`
+	MaxTokens   int     `toml:"max_tokens"`
+	Temperature float64 `toml:"temperature"`
+	TimeoutSecs int     `toml:"timeout_seconds"`
 }
 
 // IndexConfig contains indexing settings.
 type IndexConfig struct {
-	ExcludeGlobs     []string `toml:"exclude_globs"`
-	IncludeExts      []string `toml:"include_extensions"`
-	MaxFileSize      int64    `toml:"max_file_size_bytes"`
-	DebounceMs       int      `toml:"debounce_ms"`
-	WatchEnabled     bool     `toml:"watch_enabled"`
-	MaxSymbolsPerFile int     `toml:"max_symbols_per_file"`
-	EmbeddingModel   string   `toml:"embedding_model"`
+	ExcludeGlobs      []string `toml:"exclude_globs"`
+	IncludeExts       []string `toml:"include_extensions"`
+	MaxFileSize       int64    `toml:"max_file_size_bytes"`
+	DebounceMs        int      `toml:"debounce_ms"`
+	WatchEnabled      bool     `toml:"watch_enabled"`
+	MaxSymbolsPerFile int      `toml:"max_symbols_per_file"`
+	EmbeddingModel    string   `toml:"embedding_model"`
 }
 
 // LoggingConfig contains logging settings.
 type LoggingConfig struct {
-	Level       string `toml:"level"`
-	Format      string `toml:"format"`
-	Output      string `toml:"output"`
-	MaxSizeMB   int    `toml:"max_size_mb"`
-	MaxBackups  int    `toml:"max_backups"`
-	MaxAgeDays  int    `toml:"max_age_days"`
-	Compress    bool   `toml:"compress"`
+	Level      string       `toml:"level"`
+	Format     string       `toml:"format"`
+	Output     StringSlice  `toml:"output"`
+	TimeFormat string       `toml:"time_format"`
+	MaxSizeMB  int          `toml:"max_size_mb"`
+	MaxBackups int          `toml:"max_backups"`
+	MaxAgeDays int          `toml:"max_age_days"`
+	Compress   bool         `toml:"compress"`
+}
+
+// StringSlice is a custom type that can unmarshal from either a string or []string.
+type StringSlice []string
+
+// UnmarshalTOML implements toml.Unmarshaler for flexible config parsing.
+func (s *StringSlice) UnmarshalTOML(data interface{}) error {
+	switch v := data.(type) {
+	case string:
+		*s = []string{v}
+	case []interface{}:
+		result := make([]string, len(v))
+		for i, item := range v {
+			str, ok := item.(string)
+			if !ok {
+				return fmt.Errorf("expected string in array, got %T", item)
+			}
+			result[i] = str
+		}
+		*s = result
+	default:
+		return fmt.Errorf("expected string or array, got %T", data)
+	}
+	return nil
 }
 
 // SecurityConfig contains security settings.
@@ -90,12 +116,27 @@ type SecurityConfig struct {
 }
 
 // DefaultConfig returns the default configuration with all values set.
+// Environment variables ITER_HOST and ITER_PORT can override defaults.
 func DefaultConfig() *Config {
 	dataDir := DefaultDataDir()
+
+	// Check for environment variable overrides
+	host := "127.0.0.1"
+	if envHost := os.Getenv("ITER_HOST"); envHost != "" {
+		host = envHost
+	}
+
+	port := 8420
+	if envPort := os.Getenv("ITER_PORT"); envPort != "" {
+		if p, err := strconv.Atoi(envPort); err == nil {
+			port = p
+		}
+	}
+
 	return &Config{
 		Service: ServiceConfig{
-			Host:            "127.0.0.1",
-			Port:            8420,
+			Host:            host,
+			Port:            port,
 			DataDir:         dataDir,
 			PIDFile:         filepath.Join(dataDir, "iter-service.pid"),
 			ShutdownTimeout: 30,
@@ -148,8 +189,9 @@ func DefaultConfig() *Config {
 		},
 		Logging: LoggingConfig{
 			Level:      "info",
-			Format:     "json",
-			Output:     "file",
+			Format:     "text",
+			Output:     StringSlice{"file"},
+			TimeFormat: "15:04:05.000",
 			MaxSizeMB:  100,
 			MaxBackups: 5,
 			MaxAgeDays: 30,
@@ -359,9 +401,11 @@ embedding_model = "nomic-embed-text-v1.5"
 # Log level: debug, info, warn, error
 level = "info"
 # Log format: json, text
-format = "json"
-# Output: file, stdout, both
-output = "file"
+format = "text"
+# Output destinations: "file", "stdout", or both
+output = ["file"]
+# Time format for log timestamps (Go time format)
+time_format = "15:04:05.000"
 # Maximum log file size in MB before rotation
 max_size_mb = 100
 # Number of backup log files to keep
@@ -499,6 +543,9 @@ func (c *Config) Clone() *Config {
 
 	clone.Index.IncludeExts = make([]string, len(c.Index.IncludeExts))
 	copy(clone.Index.IncludeExts, c.Index.IncludeExts)
+
+	clone.Logging.Output = make(StringSlice, len(c.Logging.Output))
+	copy(clone.Logging.Output, c.Logging.Output)
 
 	return &clone
 }

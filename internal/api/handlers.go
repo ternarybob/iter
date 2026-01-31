@@ -3,9 +3,12 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"io/fs"
+	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -443,6 +446,8 @@ func (s *Server) handleWebAssets(w http.ResponseWriter, r *http.Request) {
 		s.renderSettings(w, r)
 	case path == "/docs":
 		s.renderDocs(w, r)
+	case path == "/mcp":
+		s.renderMCP(w, r)
 	default:
 		http.NotFound(w, r)
 	}
@@ -556,6 +561,7 @@ func (s *Server) renderSettings(w http.ResponseWriter, r *http.Request) {
         </h1>
         <nav>
             <a href="/">Projects</a>
+            <a href="/web/mcp">MCP Setup</a>
             <a href="/web/settings" class="active">Settings</a>
             <a href="/web/docs">API Docs</a>
         </nav>
@@ -592,6 +598,7 @@ func (s *Server) renderDocs(w http.ResponseWriter, r *http.Request) {
         </h1>
         <nav>
             <a href="/">Projects</a>
+            <a href="/web/mcp">MCP Setup</a>
             <a href="/web/settings">Settings</a>
             <a href="/web/docs" class="active">API Docs</a>
         </nav>
@@ -674,6 +681,274 @@ func (s *Server) renderDocs(w http.ResponseWriter, r *http.Request) {
     </main>
 </body>
 </html>`))
+}
+
+func (s *Server) renderMCP(w http.ResponseWriter, r *http.Request) {
+	// Determine the service URL based on configuration and environment
+	host := s.cfg.Service.Host
+	port := s.cfg.Service.Port
+
+	// Check if running in Docker (common indicators)
+	inDocker := false
+	if _, err := os.Stat("/.dockerenv"); err == nil {
+		inDocker = true
+	}
+
+	// If host is 0.0.0.0 or running in Docker, try to get external IP
+	externalHost := host
+	if host == "0.0.0.0" || host == "" || inDocker {
+		if ip := getOutboundIP(); ip != "" {
+			externalHost = ip
+		} else {
+			externalHost = "localhost"
+		}
+	}
+
+	serviceURL := fmt.Sprintf("http://%s:%d", externalHost, port)
+
+	// Generate MCP config JSON
+	mcpConfig := fmt.Sprintf(`{
+  "mcpServers": {
+    "iter": {
+      "url": "%s/mcp"
+    }
+  }
+}`, serviceURL)
+
+	// Claude Desktop config
+	claudeConfig := fmt.Sprintf(`{
+  "mcpServers": {
+    "iter": {
+      "command": "curl",
+      "args": ["-N", "%s/mcp/sse"]
+    }
+  }
+}`, serviceURL)
+
+	w.Header().Set("Content-Type", "text/html")
+	w.Write([]byte(fmt.Sprintf(`<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MCP Setup - iter-service</title>
+    <link rel="stylesheet" href="/web/static/styles.css">
+    <style>
+        .code-block {
+            position: relative;
+            background-color: var(--bg-color);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 1rem;
+            margin: 1rem 0;
+            font-family: 'JetBrains Mono', 'Fira Code', monospace;
+            font-size: 0.875rem;
+            overflow-x: auto;
+        }
+        .code-block pre {
+            margin: 0;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        .copy-btn {
+            position: absolute;
+            top: 0.5rem;
+            right: 0.5rem;
+            background-color: var(--surface-color);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 0.25rem 0.5rem;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 0.75rem;
+            transition: all 0.2s;
+        }
+        .copy-btn:hover {
+            color: var(--text-color);
+            border-color: var(--accent-color);
+        }
+        .copy-btn.copied {
+            color: var(--success-color);
+            border-color: var(--success-color);
+        }
+        .config-section {
+            margin-bottom: 2rem;
+        }
+        .config-section h3 {
+            margin-bottom: 0.5rem;
+            color: var(--accent-color);
+        }
+        .config-section p {
+            color: var(--text-muted);
+            margin-bottom: 0.5rem;
+        }
+        .info-box {
+            background-color: rgba(122, 162, 247, 0.1);
+            border: 1px solid var(--accent-color);
+            border-radius: 6px;
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+        }
+        .info-box h4 {
+            color: var(--accent-color);
+            margin-bottom: 0.5rem;
+        }
+        .service-info {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 0.5rem 1rem;
+            font-size: 0.875rem;
+        }
+        .service-info dt {
+            color: var(--text-muted);
+        }
+        .service-info dd {
+            color: var(--text-color);
+            font-family: 'JetBrains Mono', monospace;
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <h1>
+            <a href="/" style="color: inherit;">
+                <svg class="logo" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+                </svg>
+                iter-service
+            </a>
+        </h1>
+        <nav>
+            <a href="/">Projects</a>
+            <a href="/web/mcp" class="active">MCP Setup</a>
+            <a href="/web/settings">Settings</a>
+            <a href="/web/docs">API Docs</a>
+        </nav>
+    </header>
+    <main class="container">
+        <div class="card">
+            <h2 class="card-title">MCP Configuration</h2>
+
+            <div class="info-box">
+                <h4>Service Information</h4>
+                <dl class="service-info">
+                    <dt>URL:</dt>
+                    <dd>%s</dd>
+                    <dt>Host:</dt>
+                    <dd>%s</dd>
+                    <dt>Port:</dt>
+                    <dd>%d</dd>
+                    <dt>Environment:</dt>
+                    <dd>%s</dd>
+                </dl>
+            </div>
+
+            <div class="config-section">
+                <h3>Claude Code / Cline / Continue</h3>
+                <p>Add this to your MCP client configuration:</p>
+                <div class="code-block">
+                    <button class="copy-btn" onclick="copyToClipboard(this, 'mcp-config')">Copy</button>
+                    <pre id="mcp-config">%s</pre>
+                </div>
+            </div>
+
+            <div class="config-section">
+                <h3>Claude Desktop (SSE Mode)</h3>
+                <p>For Claude Desktop, use this SSE-based configuration:</p>
+                <div class="code-block">
+                    <button class="copy-btn" onclick="copyToClipboard(this, 'claude-config')">Copy</button>
+                    <pre id="claude-config">%s</pre>
+                </div>
+            </div>
+
+            <div class="config-section">
+                <h3>Available MCP Tools</h3>
+                <table style="width: 100%%; border-collapse: collapse; margin-top: 1rem;">
+                    <thead>
+                        <tr style="border-bottom: 1px solid var(--border-color);">
+                            <th style="text-align: left; padding: 0.75rem;">Tool</th>
+                            <th style="text-align: left; padding: 0.75rem;">Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr style="border-bottom: 1px solid var(--border-color);">
+                            <td style="padding: 0.75rem;"><code>search</code></td>
+                            <td style="padding: 0.75rem;">Semantic code search across indexed projects</td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid var(--border-color);">
+                            <td style="padding: 0.75rem;"><code>get_symbol</code></td>
+                            <td style="padding: 0.75rem;">Get detailed information about a symbol</td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid var(--border-color);">
+                            <td style="padding: 0.75rem;"><code>get_dependencies</code></td>
+                            <td style="padding: 0.75rem;">Find what a symbol depends on</td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid var(--border-color);">
+                            <td style="padding: 0.75rem;"><code>get_dependents</code></td>
+                            <td style="padding: 0.75rem;">Find what depends on a symbol</td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid var(--border-color);">
+                            <td style="padding: 0.75rem;"><code>get_file_impact</code></td>
+                            <td style="padding: 0.75rem;">Analyze impact of changes to a file</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 0.75rem;"><code>list_projects</code></td>
+                            <td style="padding: 0.75rem;">List all indexed projects</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        function copyToClipboard(btn, elementId) {
+            const text = document.getElementById(elementId).textContent;
+            navigator.clipboard.writeText(text).then(() => {
+                btn.textContent = 'Copied!';
+                btn.classList.add('copied');
+                setTimeout(() => {
+                    btn.textContent = 'Copy';
+                    btn.classList.remove('copied');
+                }, 2000);
+            }).catch(err => {
+                console.error('Failed to copy:', err);
+                btn.textContent = 'Error';
+                setTimeout(() => {
+                    btn.textContent = 'Copy';
+                }, 2000);
+            });
+        }
+    </script>
+</body>
+</html>`,
+		serviceURL,
+		externalHost,
+		port,
+		getEnvironmentLabel(inDocker),
+		template.HTMLEscapeString(mcpConfig),
+		template.HTMLEscapeString(claudeConfig),
+	)))
+}
+
+// getOutboundIP gets the preferred outbound IP of this machine
+func getOutboundIP() string {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		return ""
+	}
+	defer conn.Close()
+
+	localAddr := conn.LocalAddr().(*net.UDPAddr)
+	return localAddr.IP.String()
+}
+
+// getEnvironmentLabel returns a human-readable environment label
+func getEnvironmentLabel(inDocker bool) string {
+	if inDocker {
+		return "Docker Container"
+	}
+	return "Local"
 }
 
 // handleProjectsList returns the project list as an HTML partial for HTMX.
