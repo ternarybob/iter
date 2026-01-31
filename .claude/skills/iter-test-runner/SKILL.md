@@ -34,10 +34,11 @@ This skill runs iter-service integration tests in completely isolated Docker con
 
 ### Step 1: Validate Test Structure
 
-Before running, verify the test file:
-1. Check test file exists and compiles: `go build ./tests/...`
-2. Check test function signature is valid: `func Test*(t *testing.T)`
-3. If invalid, STOP and report: "Test structure invalid: {reason}"
+Before running, verify the test file compiles:
+```bash
+go build ./tests/...
+```
+If invalid, STOP and report: "Test structure invalid: {reason}"
 
 ### Step 2: Run Test in Docker
 
@@ -64,33 +65,31 @@ The test runner will:
 
 ### Step 3: Analyze Results
 
-Check the output files:
-- `test-output.log` - Full container output
-- `test-summary.txt` - Extracted test results
-- `summary.json` - JSON summary with pass/fail counts
+Results are saved to `./tests/results/{timestamp}-{suite}/` with these files:
+- `build.log` - Docker image build output
+- `test-output.log` - Full container stdout/stderr
+- `test-summary.txt` - Extracted test pass/fail lines
+- `summary.json` - JSON summary:
+  ```json
+  {
+      "timestamp": "2026-01-31_14-51-33",
+      "suite": "all",
+      "test_pattern": "",
+      "total_tests": 18,
+      "passed": 18,
+      "failed": 0,
+      "exit_code": 0,
+      "isolated": true,
+      "docker": true
+  }
+  ```
 
-Parse for:
-- PASS: Test passed, DONE
-- FAIL: Extract failure reason, proceed to fix
-- ERROR: Build/compile error, analyze error
+Parse test-output.log for:
+- `--- PASS`: Test passed
+- `--- FAIL`: Test failed - extract error message and proceed to fix
+- Build errors: Analyze compilation error
 
-### Step 4: Create Iteration Summary
-
-After each fix attempt, document in the results directory:
-
-```json
-{
-  "iteration": N,
-  "test_name": "TestXxx",
-  "status": "pass|fail|error",
-  "error_message": "...",
-  "fix_applied": "description of fix",
-  "files_modified": ["path/to/file.go"],
-  "timestamp": "2024-01-01T00:00:00Z"
-}
-```
-
-### Step 5: Apply Fix
+### Step 4: Apply Fix (if tests failed)
 
 1. Read error message from test-output.log
 2. Identify root cause from the error
@@ -99,10 +98,10 @@ After each fix attempt, document in the results directory:
 5. **DO NOT modify test files** (tests/*.go)
 6. Run tests again in Docker
 
-### Step 6: Iterate or Stop
+### Step 5: Iterate or Stop
 
-- If test passes: Create final success summary, DONE
-- If 5 iterations reached: Create failure summary with all attempts, STOP
+- If test passes: Report success, DONE
+- If 5 iterations reached: Report failure with all attempts, STOP
 - If same error repeats 3 times: STOP with "Unable to fix: {reason}"
 - Otherwise: Go to Step 2
 
@@ -114,17 +113,21 @@ Final output includes:
 3. Summary of fixes applied
 4. Path to results directory
 
-## Test Structure Requirements
+## Test Structure
+
+Tests are located in:
+- `tests/service/` - Service lifecycle tests
+- `tests/api/` - REST API tests
+- `tests/ui/` - Web UI tests
+- `tests/common/` - Shared test utilities
 
 Valid test files must:
-1. Be in `tests/service/`, `tests/api/`, or `tests/ui/` directories
-2. Import `"github.com/ternarybob/iter/tests/common"`
-3. Use `common.NewTestEnv(t, "type", "test-name")` for setup
-4. Call `env.Cleanup()` in defer
-5. Call `env.WriteSummary()` with results
+1. Import `"github.com/ternarybob/iter/tests/common"`
+2. Use `common.NewTestEnv(t, "type", "test-name")` for setup
+3. Call `defer env.Cleanup()`
+4. Call `env.Start()` to start the service
 
-## Example Valid Test
-
+Example:
 ```go
 func TestExample(t *testing.T) {
     env := common.NewTestEnv(t, "api", "example")
@@ -134,9 +137,8 @@ func TestExample(t *testing.T) {
         t.Fatalf("Failed to start: %v", err)
     }
 
-    // Test logic here
-
-    env.WriteSummary(true, time.Since(start), "Test passed")
+    client := env.NewHTTPClient()
+    // Test logic using client.Get(), client.Post(), etc.
 }
 ```
 
@@ -144,10 +146,9 @@ func TestExample(t *testing.T) {
 
 STOP immediately and report if:
 1. Test file has syntax errors
-2. Test function signature is wrong
-3. Test expects behavior that contradicts architecture
-4. Same fix fails 3 times
-5. 5 iterations without progress
+2. Test expects behavior that contradicts architecture
+3. Same fix fails 3 times
+4. 5 iterations without progress
 
 ## Docker Isolation
 
