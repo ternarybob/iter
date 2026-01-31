@@ -18,10 +18,6 @@ import (
 	"github.com/ternarybob/iter/internal/config"
 )
 
-const (
-	pidFileName = "service.pid"
-	logFileName = "service.log"
-)
 
 // Daemon manages the service lifecycle.
 type Daemon struct {
@@ -170,19 +166,22 @@ func (d *Daemon) setupLogging() error {
 
 // writePID writes the current process PID to a file.
 func (d *Daemon) writePID() error {
-	pidPath := filepath.Join(d.cfg.Service.DataDir, pidFileName)
+	pidPath := d.cfg.PIDPath()
+	// Ensure directory exists
+	if err := os.MkdirAll(filepath.Dir(pidPath), 0755); err != nil {
+		return fmt.Errorf("create PID directory: %w", err)
+	}
 	return os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0644)
 }
 
 // removePID removes the PID file.
 func (d *Daemon) removePID() {
-	pidPath := filepath.Join(d.cfg.Service.DataDir, pidFileName)
-	_ = os.Remove(pidPath)
+	_ = os.Remove(d.cfg.PIDPath())
 }
 
 // IsRunning checks if a daemon is already running.
 func IsRunning(cfg *config.Config) (bool, int) {
-	pidPath := filepath.Join(cfg.Service.DataDir, pidFileName)
+	pidPath := cfg.PIDPath()
 
 	data, err := os.ReadFile(pidPath)
 	if err != nil {
@@ -241,8 +240,7 @@ func StopRunning(cfg *config.Config) error {
 	}
 
 	// Clean up PID file
-	pidPath := filepath.Join(cfg.Service.DataDir, pidFileName)
-	_ = os.Remove(pidPath)
+	_ = os.Remove(cfg.PIDPath())
 
 	return nil
 }

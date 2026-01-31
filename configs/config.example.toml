@@ -1,0 +1,106 @@
+# iter-service configuration file
+# All values shown are defaults - uncomment and modify as needed
+
+[service]
+# Host to bind the HTTP server to
+host = "127.0.0.1"
+# Port to listen on
+port = 8420
+# Directory for service data (indexes, registry, logs)
+# data_dir = "~/.iter-service"
+# PID file location
+# pid_file = "~/.iter-service/iter-service.pid"
+# Graceful shutdown timeout in seconds
+shutdown_timeout_seconds = 30
+# Maximum request body size in bytes (10MB default)
+max_request_size_bytes = 10485760
+
+[api]
+# Enable the REST API
+enabled = true
+# API key for authentication (empty = no auth for localhost)
+api_key = ""
+# Rate limit requests per minute (0 = unlimited)
+rate_limit_per_minute = 100
+# Allowed CORS origins
+allowed_origins = ["http://localhost:*", "http://127.0.0.1:*"]
+# Request timeout in seconds
+request_timeout_seconds = 60
+
+[mcp]
+# Enable MCP server mode
+enabled = true
+# Automatically build index when starting MCP server
+auto_build_index = true
+
+[llm]
+# LLM provider (gemini, openai, anthropic)
+provider = "gemini"
+# API key (can use environment variable: ${GEMINI_API_KEY})
+api_key = "${GEMINI_API_KEY}"
+# Model to use
+model = "gemini-1.5-flash"
+# Maximum tokens for responses
+max_tokens = 1024
+# Temperature for generation (0.0-1.0)
+temperature = 0.3
+# Timeout in seconds
+timeout_seconds = 30
+
+[index]
+# Glob patterns to exclude from indexing
+exclude_globs = [
+    "vendor/**",
+    "node_modules/**",
+    ".git/**",
+    "*.min.js",
+    "*.min.css",
+    "dist/**",
+    "build/**",
+    "__pycache__/**",
+    "*.pyc",
+    ".venv/**",
+    "target/**",
+]
+# File extensions to include
+include_extensions = [
+    ".go", ".py", ".js", ".ts", ".tsx", ".jsx",
+    ".java", ".kt", ".scala", ".rs", ".c", ".cpp",
+    ".h", ".hpp", ".cs", ".rb", ".php", ".swift",
+]
+# Maximum file size to index in bytes (1MB default)
+max_file_size_bytes = 1048576
+# File change debounce time in milliseconds
+debounce_ms = 500
+# Enable file watching for automatic re-indexing
+watch_enabled = true
+# Maximum symbols to extract per file
+max_symbols_per_file = 1000
+# Embedding model for semantic search
+embedding_model = "nomic-embed-text-v1.5"
+
+[logging]
+# Log level: debug, info, warn, error
+level = "info"
+# Log format: json, text
+format = "json"
+# Output: file, stdout, both
+output = "file"
+# Maximum log file size in MB before rotation
+max_size_mb = 100
+# Number of backup log files to keep
+max_backups = 5
+# Maximum age of log files in days
+max_age_days = 30
+# Compress rotated log files
+compress = true
+
+[security]
+# Enable TLS/HTTPS
+tls_enabled = false
+# Path to TLS certificate file
+# tls_cert_file = "/path/to/cert.pem"
+# Path to TLS key file
+# tls_key_file = "/path/to/key.pem"
+# Enable CORS
+cors_enabled = true

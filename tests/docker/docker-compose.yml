@@ -1,0 +1,62 @@
+# Docker Compose for iter-service testing
+# Provides isolated test environments
+
+version: '3.8'
+
+services:
+  # Run all tests
+  test:
+    build:
+      context: ../..
+      dockerfile: tests/docker/Dockerfile
+    volumes:
+      - ../../tests/results:/app/tests/results
+    environment:
+      - ITER_TEST_MODE=1
+    command: go test -v -timeout 300s ./tests/...
+
+  # Run service tests only
+  test-service:
+    build:
+      context: ../..
+      dockerfile: tests/docker/Dockerfile
+    volumes:
+      - ../../tests/results:/app/tests/results
+    environment:
+      - ITER_TEST_MODE=1
+    command: go test -v -timeout 120s ./tests/service/...
+
+  # Run API tests only
+  test-api:
+    build:
+      context: ../..
+      dockerfile: tests/docker/Dockerfile
+    volumes:
+      - ../../tests/results:/app/tests/results
+    environment:
+      - ITER_TEST_MODE=1
+    command: go test -v -timeout 120s ./tests/api/...
+
+  # Run UI tests only
+  test-ui:
+    build:
+      context: ../..
+      dockerfile: tests/docker/Dockerfile
+    volumes:
+      - ../../tests/results:/app/tests/results
+    environment:
+      - ITER_TEST_MODE=1
+    command: go test -v -timeout 120s ./tests/ui/...
+
+  # Interactive shell for debugging
+  shell:
+    build:
+      context: ../..
+      dockerfile: tests/docker/Dockerfile
+    volumes:
+      - ../../tests/results:/app/tests/results
+    environment:
+      - ITER_TEST_MODE=1
+    command: /bin/bash
+    stdin_open: true
+    tty: true

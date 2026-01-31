@@ -10,59 +10,156 @@ import (
 	"runtime"
 	"strings"
 
-	"gopkg.in/yaml.v3"
+	"github.com/BurntSushi/toml"
 )
 
 // Config represents the service configuration.
 type Config struct {
-	Service ServiceConfig `yaml:"service"`
-	API     APIConfig     `yaml:"api"`
-	MCP     MCPConfig     `yaml:"mcp"`
-	LLM     LLMConfig     `yaml:"llm"`
+	Service  ServiceConfig  `toml:"service"`
+	API      APIConfig      `toml:"api"`
+	MCP      MCPConfig      `toml:"mcp"`
+	LLM      LLMConfig      `toml:"llm"`
+	Index    IndexConfig    `toml:"index"`
+	Logging  LoggingConfig  `toml:"logging"`
+	Security SecurityConfig `toml:"security"`
 }
 
 // ServiceConfig contains service-level settings.
 type ServiceConfig struct {
-	Host     string `yaml:"host"`
-	Port     int    `yaml:"port"`
-	DataDir  string `yaml:"data_dir"`
-	LogLevel string `yaml:"log_level"`
+	Host            string `toml:"host"`
+	Port            int    `toml:"port"`
+	DataDir         string `toml:"data_dir"`
+	PIDFile         string `toml:"pid_file"`
+	ShutdownTimeout int    `toml:"shutdown_timeout_seconds"`
+	MaxRequestSize  int64  `toml:"max_request_size_bytes"`
 }
 
 // APIConfig contains API settings.
 type APIConfig struct {
-	Enabled bool   `yaml:"enabled"`
-	APIKey  string `yaml:"api_key"`
+	Enabled        bool     `toml:"enabled"`
+	APIKey         string   `toml:"api_key"`
+	RateLimit      int      `toml:"rate_limit_per_minute"`
+	AllowedOrigins []string `toml:"allowed_origins"`
+	RequestTimeout int      `toml:"request_timeout_seconds"`
 }
 
 // MCPConfig contains MCP server settings.
 type MCPConfig struct {
-	Enabled bool `yaml:"enabled"`
+	Enabled       bool `toml:"enabled"`
+	AutoBuildIndex bool `toml:"auto_build_index"`
 }
 
 // LLMConfig contains LLM integration settings.
 type LLMConfig struct {
-	APIKey string `yaml:"api_key"`
+	Provider     string `toml:"provider"`
+	APIKey       string `toml:"api_key"`
+	Model        string `toml:"model"`
+	MaxTokens    int    `toml:"max_tokens"`
+	Temperature  float64 `toml:"temperature"`
+	TimeoutSecs  int    `toml:"timeout_seconds"`
 }
 
-// DefaultConfig returns the default configuration.
+// IndexConfig contains indexing settings.
+type IndexConfig struct {
+	ExcludeGlobs     []string `toml:"exclude_globs"`
+	IncludeExts      []string `toml:"include_extensions"`
+	MaxFileSize      int64    `toml:"max_file_size_bytes"`
+	DebounceMs       int      `toml:"debounce_ms"`
+	WatchEnabled     bool     `toml:"watch_enabled"`
+	MaxSymbolsPerFile int     `toml:"max_symbols_per_file"`
+	EmbeddingModel   string   `toml:"embedding_model"`
+}
+
+// LoggingConfig contains logging settings.
+type LoggingConfig struct {
+	Level       string `toml:"level"`
+	Format      string `toml:"format"`
+	Output      string `toml:"output"`
+	MaxSizeMB   int    `toml:"max_size_mb"`
+	MaxBackups  int    `toml:"max_backups"`
+	MaxAgeDays  int    `toml:"max_age_days"`
+	Compress    bool   `toml:"compress"`
+}
+
+// SecurityConfig contains security settings.
+type SecurityConfig struct {
+	TLSEnabled  bool   `toml:"tls_enabled"`
+	TLSCertFile string `toml:"tls_cert_file"`
+	TLSKeyFile  string `toml:"tls_key_file"`
+	CORSEnabled bool   `toml:"cors_enabled"`
+}
+
+// DefaultConfig returns the default configuration with all values set.
 func DefaultConfig() *Config {
+	dataDir := DefaultDataDir()
 	return &Config{
 		Service: ServiceConfig{
-			Host:     "127.0.0.1",
-			Port:     8420,
-			DataDir:  DefaultDataDir(),
-			LogLevel: "info",
+			Host:            "127.0.0.1",
+			Port:            8420,
+			DataDir:         dataDir,
+			PIDFile:         filepath.Join(dataDir, "iter-service.pid"),
+			ShutdownTimeout: 30,
+			MaxRequestSize:  10 * 1024 * 1024, // 10MB
 		},
 		API: APIConfig{
-			Enabled: true,
-			APIKey:  "", // Empty = no auth for localhost
+			Enabled:        true,
+			APIKey:         "", // Empty = no auth for localhost
+			RateLimit:      100,
+			AllowedOrigins: []string{"http://localhost:*", "http://127.0.0.1:*"},
+			RequestTimeout: 60,
 		},
 		MCP: MCPConfig{
-			Enabled: true,
+			Enabled:        true,
+			AutoBuildIndex: true,
 		},
 		LLM: LLMConfig{
-			APIKey: os.Getenv("GEMINI_API_KEY"),
+			Provider:    "gemini",
+			APIKey:      os.Getenv("GEMINI_API_KEY"),
+			Model:       "gemini-1.5-flash",
+			MaxTokens:   1024,
+			Temperature: 0.3,
+			TimeoutSecs: 30,
+		},
+		Index: IndexConfig{
+			ExcludeGlobs: []string{
+				"vendor/**",
+				"node_modules/**",
+				".git/**",
+				"*.min.js",
+				"*.min.css",
+				"dist/**",
+				"build/**",
+				"__pycache__/**",
+				"*.pyc",
+				".venv/**",
+				"target/**",
+			},
+			IncludeExts: []string{
+				".go", ".py", ".js", ".ts", ".tsx", ".jsx",
+				".java", ".kt", ".scala", ".rs", ".c", ".cpp",
+				".h", ".hpp", ".cs", ".rb", ".php", ".swift",
+				".m", ".mm", ".sql", ".sh", ".bash", ".zsh",
+			},
+			MaxFileSize:       1024 * 1024, // 1MB
+			DebounceMs:        500,
+			WatchEnabled:      true,
+			MaxSymbolsPerFile: 1000,
+			EmbeddingModel:    "nomic-embed-text-v1.5",
+		},
+		Logging: LoggingConfig{
+			Level:      "info",
+			Format:     "json",
+			Output:     "file",
+			MaxSizeMB:  100,
+			MaxBackups: 5,
+			MaxAgeDays: 30,
+			Compress:   true,
+		},
+		Security: SecurityConfig{
+			TLSEnabled:  false,
+			TLSCertFile: "",
+			TLSKeyFile:  "",
+			CORSEnabled: true,
 		},
 	}
 }
@@ -93,10 +190,10 @@ func DefaultDataDir() string {
 
 // DefaultConfigPath returns the default config file path.
 func DefaultConfigPath() string {
-	return filepath.Join(DefaultDataDir(), "config.yaml")
+	return filepath.Join(DefaultDataDir(), "config.toml")
 }
 
-// Load loads configuration from a file.
+// Load loads configuration from a file, merging with defaults.
 func Load(path string) (*Config, error) {
 	cfg := DefaultConfig()
 
@@ -112,36 +209,184 @@ func Load(path string) (*Config, error) {
 	// Expand environment variables in the config
 	expanded := os.ExpandEnv(string(data))
 
-	if err := yaml.Unmarshal([]byte(expanded), cfg); err != nil {
+	if _, err := toml.Decode(expanded, cfg); err != nil {
 		return nil, fmt.Errorf("parse config file: %w", err)
 	}
 
-	// Expand tilde in data_dir
-	if strings.HasPrefix(cfg.Service.DataDir, "~/") {
-		home, _ := os.UserHomeDir()
-		cfg.Service.DataDir = filepath.Join(home, cfg.Service.DataDir[2:])
-	}
+	// Expand tilde in paths
+	cfg.expandPaths()
 
 	return cfg, nil
 }
 
-// Save saves the configuration to a file.
+// LoadFromString loads configuration from a TOML string, merging with defaults.
+func LoadFromString(tomlStr string) (*Config, error) {
+	cfg := DefaultConfig()
+
+	// Expand environment variables
+	expanded := os.ExpandEnv(tomlStr)
+
+	if _, err := toml.Decode(expanded, cfg); err != nil {
+		return nil, fmt.Errorf("parse config string: %w", err)
+	}
+
+	cfg.expandPaths()
+	return cfg, nil
+}
+
+// expandPaths expands tilde in path fields.
+func (c *Config) expandPaths() {
+	home, _ := os.UserHomeDir()
+
+	expandTilde := func(path string) string {
+		if strings.HasPrefix(path, "~/") {
+			return filepath.Join(home, path[2:])
+		}
+		return path
+	}
+
+	c.Service.DataDir = expandTilde(c.Service.DataDir)
+	c.Service.PIDFile = expandTilde(c.Service.PIDFile)
+	c.Security.TLSCertFile = expandTilde(c.Security.TLSCertFile)
+	c.Security.TLSKeyFile = expandTilde(c.Security.TLSKeyFile)
+}
+
+// Save saves the configuration to a file in TOML format.
 func (c *Config) Save(path string) error {
 	// Ensure directory exists
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return fmt.Errorf("create config directory: %w", err)
 	}
 
-	data, err := yaml.Marshal(c)
+	f, err := os.Create(path)
 	if err != nil {
-		return fmt.Errorf("marshal config: %w", err)
+		return fmt.Errorf("create config file: %w", err)
 	}
+	defer f.Close()
 
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		return fmt.Errorf("write config file: %w", err)
+	encoder := toml.NewEncoder(f)
+	if err := encoder.Encode(c); err != nil {
+		return fmt.Errorf("encode config: %w", err)
 	}
 
 	return nil
+}
+
+// WriteExampleConfig writes an example config file with comments.
+func WriteExampleConfig(path string) error {
+	example := `# iter-service configuration file
+# All values shown are defaults - uncomment and modify as needed
+
+[service]
+# Host to bind the HTTP server to
+host = "127.0.0.1"
+# Port to listen on
+port = 8420
+# Directory for service data (indexes, registry, logs)
+# data_dir = "~/.iter-service"
+# PID file location
+# pid_file = "~/.iter-service/iter-service.pid"
+# Graceful shutdown timeout in seconds
+shutdown_timeout_seconds = 30
+# Maximum request body size in bytes (10MB default)
+max_request_size_bytes = 10485760
+
+[api]
+# Enable the REST API
+enabled = true
+# API key for authentication (empty = no auth for localhost)
+api_key = ""
+# Rate limit requests per minute (0 = unlimited)
+rate_limit_per_minute = 100
+# Allowed CORS origins
+allowed_origins = ["http://localhost:*", "http://127.0.0.1:*"]
+# Request timeout in seconds
+request_timeout_seconds = 60
+
+[mcp]
+# Enable MCP server mode
+enabled = true
+# Automatically build index when starting MCP server
+auto_build_index = true
+
+[llm]
+# LLM provider (gemini, openai, anthropic)
+provider = "gemini"
+# API key (can use environment variable: ${GEMINI_API_KEY})
+api_key = "${GEMINI_API_KEY}"
+# Model to use
+model = "gemini-1.5-flash"
+# Maximum tokens for responses
+max_tokens = 1024
+# Temperature for generation (0.0-1.0)
+temperature = 0.3
+# Timeout in seconds
+timeout_seconds = 30
+
+[index]
+# Glob patterns to exclude from indexing
+exclude_globs = [
+    "vendor/**",
+    "node_modules/**",
+    ".git/**",
+    "*.min.js",
+    "*.min.css",
+    "dist/**",
+    "build/**",
+    "__pycache__/**",
+    "*.pyc",
+    ".venv/**",
+    "target/**",
+]
+# File extensions to include
+include_extensions = [
+    ".go", ".py", ".js", ".ts", ".tsx", ".jsx",
+    ".java", ".kt", ".scala", ".rs", ".c", ".cpp",
+    ".h", ".hpp", ".cs", ".rb", ".php", ".swift",
+]
+# Maximum file size to index in bytes (1MB default)
+max_file_size_bytes = 1048576
+# File change debounce time in milliseconds
+debounce_ms = 500
+# Enable file watching for automatic re-indexing
+watch_enabled = true
+# Maximum symbols to extract per file
+max_symbols_per_file = 1000
+# Embedding model for semantic search
+embedding_model = "nomic-embed-text-v1.5"
+
+[logging]
+# Log level: debug, info, warn, error
+level = "info"
+# Log format: json, text
+format = "json"
+# Output: file, stdout, both
+output = "file"
+# Maximum log file size in MB before rotation
+max_size_mb = 100
+# Number of backup log files to keep
+max_backups = 5
+# Maximum age of log files in days
+max_age_days = 30
+# Compress rotated log files
+compress = true
+
+[security]
+# Enable TLS/HTTPS
+tls_enabled = false
+# Path to TLS certificate file
+# tls_cert_file = "/path/to/cert.pem"
+# Path to TLS key file
+# tls_key_file = "/path/to/key.pem"
+# Enable CORS
+cors_enabled = true
+`
+
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return fmt.Errorf("create config directory: %w", err)
+	}
+
+	return os.WriteFile(path, []byte(example), 0644)
 }
 
 // Address returns the full address string for the HTTP server.
@@ -162,6 +407,14 @@ func (c *Config) RegistryPath() string {
 // LogPath returns the path to the service log file.
 func (c *Config) LogPath() string {
 	return filepath.Join(c.Service.DataDir, "logs", "service.log")
+}
+
+// PIDPath returns the path to the PID file.
+func (c *Config) PIDPath() string {
+	if c.Service.PIDFile != "" {
+		return c.Service.PIDFile
+	}
+	return filepath.Join(c.Service.DataDir, "iter-service.pid")
 }
 
 // EnsureDirectories creates all necessary directories.
@@ -204,4 +457,48 @@ func (c *Config) ProjectDataDir(projectPath string) string {
 // ProjectIndexDir returns the index directory for a specific project.
 func (c *Config) ProjectIndexDir(projectPath string) string {
 	return filepath.Join(c.ProjectDataDir(projectPath), "index")
+}
+
+// Validate validates the configuration and returns any errors.
+func (c *Config) Validate() error {
+	if c.Service.Port < 1 || c.Service.Port > 65535 {
+		return fmt.Errorf("invalid port: %d (must be 1-65535)", c.Service.Port)
+	}
+
+	if c.Service.ShutdownTimeout < 1 {
+		return fmt.Errorf("shutdown_timeout_seconds must be at least 1")
+	}
+
+	if c.API.RateLimit < 0 {
+		return fmt.Errorf("rate_limit_per_minute cannot be negative")
+	}
+
+	if c.LLM.Temperature < 0 || c.LLM.Temperature > 1 {
+		return fmt.Errorf("temperature must be between 0.0 and 1.0")
+	}
+
+	if c.Security.TLSEnabled {
+		if c.Security.TLSCertFile == "" || c.Security.TLSKeyFile == "" {
+			return fmt.Errorf("TLS enabled but cert/key files not specified")
+		}
+	}
+
+	return nil
+}
+
+// Clone creates a deep copy of the configuration.
+func (c *Config) Clone() *Config {
+	clone := *c
+
+	// Deep copy slices
+	clone.API.AllowedOrigins = make([]string, len(c.API.AllowedOrigins))
+	copy(clone.API.AllowedOrigins, c.API.AllowedOrigins)
+
+	clone.Index.ExcludeGlobs = make([]string, len(c.Index.ExcludeGlobs))
+	copy(clone.Index.ExcludeGlobs, c.Index.ExcludeGlobs)
+
+	clone.Index.IncludeExts = make([]string, len(c.Index.IncludeExts))
+	copy(clone.Index.IncludeExts, c.Index.IncludeExts)
+
+	return &clone
 }

@@ -18,8 +18,10 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/ternarybob/iter/internal/api"
 	"github.com/ternarybob/iter/internal/config"
@@ -31,23 +33,45 @@ import (
 // version is set via -ldflags at build time
 var version = "dev"
 
+// Command-line flags
+var (
+	configPath string
+)
+
 func main() {
 	// Set version in API package
 	api.SetVersion(version)
 
-	if len(os.Args) < 2 {
-		// Default: start service
-		if err := cmdServe(); err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+	// Parse global flags that appear before the command
+	args := os.Args[1:]
+	command := ""
+	cmdArgs := []string{}
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if strings.HasPrefix(arg, "--config=") {
+			configPath = strings.TrimPrefix(arg, "--config=")
+		} else if arg == "--config" && i+1 < len(args) {
+			configPath = args[i+1]
+			i++
+		} else if strings.HasPrefix(arg, "-") {
+			// Skip unknown flags for now
+		} else if command == "" {
+			command = arg
+		} else {
+			cmdArgs = append(cmdArgs, arg)
 		}
-		return
+	}
+
+	// Default command is serve
+	if command == "" {
+		command = "serve"
 	}
 
 	var err error
-	switch os.Args[1] {
+	switch command {
 	case "serve", "start":
-		err = cmdServe()
+		err = cmdServe(cmdArgs)
 	case "version", "-v", "--version":
 		cmdVersion()
 	case "status":
@@ -55,11 +79,13 @@ func main() {
 	case "stop":
 		err = cmdStop()
 	case "mcp", "mcp-server":
-		err = cmdMCP()
+		err = cmdMCP(cmdArgs)
+	case "init-config":
+		err = cmdInitConfig()
 	case "help", "-h", "--help":
 		printUsage()
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command: %s\n", os.Args[1])
+		fmt.Fprintf(os.Stderr, "unknown command: %s\n", command)
 		printUsage()
 		os.Exit(1)
 	}
@@ -74,7 +100,7 @@ func printUsage() {
 	fmt.Println(`iter-service - Code indexing and discovery service
 
 Usage:
-  iter-service [command]
+  iter-service [flags] [command] [args]
 
 Commands:
   serve         Start the service (default)
@@ -82,30 +108,63 @@ Commands:
   status        Show service status
   stop          Stop the running service
   mcp           Start MCP server (stdio mode for Claude integration)
+  init-config   Create example configuration file
   help          Show this help
+
+Flags:
+  --config PATH   Path to configuration file (default: ~/.iter-service/config.toml)
 
 Environment:
   GEMINI_API_KEY    API key for LLM features (optional)
+  ITER_CONFIG       Path to configuration file (alternative to --config)
+  ITER_DATA_DIR     Override data directory
 
 Configuration:
-  Config file: ~/.iter-service/config.yaml (or $APPDATA/iter-service on Windows)
+  Config file: ~/.iter-service/config.toml (TOML format)
 
 Examples:
-  iter-service                  Start the service
-  iter-service mcp              Start MCP server for Claude
-  curl localhost:8420/health    Check service health
-  curl localhost:8420/projects  List registered projects`)
+  iter-service                         Start the service with defaults
+  iter-service --config /path/to.toml  Start with custom config
+  iter-service mcp                     Start MCP server for Claude
+  iter-service init-config             Create example config file
+  curl localhost:8420/health           Check service health
+  curl localhost:8420/projects         List registered projects`)
 }
 
 func cmdVersion() {
 	fmt.Printf("iter-service version %s\n", version)
 }
 
-func cmdServe() error {
+func getConfigPath() string {
+	// Priority: --config flag > ITER_CONFIG env > default
+	if configPath != "" {
+		return configPath
+	}
+	if envPath := os.Getenv("ITER_CONFIG"); envPath != "" {
+		return envPath
+	}
+	return config.DefaultConfigPath()
+}
+
+func cmdServe(args []string) error {
+	// Parse serve-specific flags
+	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
+	fs.Parse(args)
+
 	// Load configuration
-	cfg, err := config.Load(config.DefaultConfigPath())
+	cfg, err := config.Load(getConfigPath())
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
+	}
+
+	// Override data dir from environment if set
+	if envDataDir := os.Getenv("ITER_DATA_DIR"); envDataDir != "" {
+		cfg.Service.DataDir = envDataDir
+	}
+
+	// Validate configuration
+	if err := cfg.Validate(); err != nil {
+		return fmt.Errorf("invalid config: %w", err)
 	}
 
 	// Check if already running
@@ -148,15 +207,22 @@ func cmdServe() error {
 }
 
 func cmdStatus() error {
-	cfg, err := config.Load(config.DefaultConfigPath())
+	cfg, err := config.Load(getConfigPath())
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
+	}
+
+	// Override data dir from environment if set
+	if envDataDir := os.Getenv("ITER_DATA_DIR"); envDataDir != "" {
+		cfg.Service.DataDir = envDataDir
 	}
 
 	running, pid := service.IsRunning(cfg)
 	if running {
 		fmt.Printf("iter-service: running (PID %d)\n", pid)
 		fmt.Printf("Address: %s\n", cfg.Address())
+		fmt.Printf("Config: %s\n", getConfigPath())
+		fmt.Printf("Data: %s\n", cfg.Service.DataDir)
 	} else {
 		fmt.Println("iter-service: stopped")
 	}
@@ -165,9 +231,14 @@ func cmdStatus() error {
 }
 
 func cmdStop() error {
-	cfg, err := config.Load(config.DefaultConfigPath())
+	cfg, err := config.Load(getConfigPath())
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
+	}
+
+	// Override data dir from environment if set
+	if envDataDir := os.Getenv("ITER_DATA_DIR"); envDataDir != "" {
+		cfg.Service.DataDir = envDataDir
 	}
 
 	running, pid := service.IsRunning(cfg)
@@ -185,11 +256,11 @@ func cmdStop() error {
 	return nil
 }
 
-func cmdMCP() error {
+func cmdMCP(args []string) error {
 	// Check for project path argument
 	projectPath := "."
-	if len(os.Args) > 2 {
-		projectPath = os.Args[2]
+	if len(args) > 0 {
+		projectPath = args[0]
 	}
 
 	// Get absolute path
@@ -208,7 +279,7 @@ func cmdMCP() error {
 	}
 
 	// Load config
-	cfg, err := config.Load(config.DefaultConfigPath())
+	cfg, err := config.Load(getConfigPath())
 	if err != nil {
 		cfg = config.DefaultConfig()
 	}
@@ -219,8 +290,8 @@ func cmdMCP() error {
 		ProjectPath:  absPath,
 		RepoRoot:     absPath,
 		IndexPath:    cfg.ProjectIndexDir(absPath),
-		ExcludeGlobs: []string{"vendor/**", "*_test.go", ".git/**", "node_modules/**"},
-		DebounceMs:   500,
+		ExcludeGlobs: cfg.Index.ExcludeGlobs,
+		DebounceMs:   cfg.Index.DebounceMs,
 	}
 
 	// Ensure index directory exists
@@ -234,8 +305,8 @@ func cmdMCP() error {
 		return fmt.Errorf("create indexer: %w", err)
 	}
 
-	// Auto-build if index is empty
-	if idx.Stats().DocumentCount == 0 {
+	// Auto-build if index is empty and auto_build_index is enabled
+	if cfg.MCP.AutoBuildIndex && idx.Stats().DocumentCount == 0 {
 		fmt.Fprintf(os.Stderr, "[iter-service] Building index for %s...\n", absPath)
 		if err := idx.IndexAll(); err != nil {
 			return fmt.Errorf("build index: %w", err)
@@ -245,11 +316,13 @@ func cmdMCP() error {
 			stats.DocumentCount, stats.FileCount)
 	}
 
-	// Start watcher in background
-	watcher, err := index.NewWatcher(idx)
-	if err == nil {
-		if err := watcher.Start(); err == nil {
-			defer watcher.Stop()
+	// Start watcher in background if enabled
+	if cfg.Index.WatchEnabled {
+		watcher, err := index.NewWatcher(idx)
+		if err == nil {
+			if err := watcher.Start(); err == nil {
+				defer watcher.Stop()
+			}
 		}
 	}
 
@@ -266,4 +339,20 @@ func cmdMCP() error {
 	}()
 
 	return mcpServer.ServeStdio()
+}
+
+func cmdInitConfig() error {
+	path := getConfigPath()
+
+	// Check if file already exists
+	if _, err := os.Stat(path); err == nil {
+		return fmt.Errorf("config file already exists: %s", path)
+	}
+
+	if err := config.WriteExampleConfig(path); err != nil {
+		return err
+	}
+
+	fmt.Printf("Created example configuration: %s\n", path)
+	return nil
 }
