@@ -1,10 +1,8 @@
 # Docker Compose for iter-service testing
-# Provides isolated test environments
-
-version: '3.8'
+# Provides isolated test environments - always builds fresh containers
 
 services:
-  # Run all tests
+  # Run all tests (default)
   test:
     build:
       context: ../..
@@ -13,7 +11,7 @@ services:
       - ../../tests/results:/app/tests/results
     environment:
       - ITER_TEST_MODE=1
-    command: go test -v -timeout 300s ./tests/...
+    command: go test -p 1 -v -timeout 300s ./tests/...
 
   # Run service tests only
   test-service:
@@ -24,7 +22,7 @@ services:
       - ../../tests/results:/app/tests/results
     environment:
       - ITER_TEST_MODE=1
-    command: go test -v -timeout 120s ./tests/service/...
+    command: go test -p 1 -v -timeout 120s ./tests/service/...
 
   # Run API tests only
   test-api:
@@ -35,7 +33,7 @@ services:
       - ../../tests/results:/app/tests/results
     environment:
       - ITER_TEST_MODE=1
-    command: go test -v -timeout 120s ./tests/api/...
+    command: go test -p 1 -v -timeout 120s ./tests/api/...
 
   # Run UI tests only
   test-ui:
@@ -46,7 +44,7 @@ services:
       - ../../tests/results:/app/tests/results
     environment:
       - ITER_TEST_MODE=1
-    command: go test -v -timeout 120s ./tests/ui/...
+    command: go test -p 1 -v -timeout 120s ./tests/ui/...
 
   # Interactive shell for debugging
   shell:

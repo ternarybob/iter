@@ -33,6 +33,7 @@ go.work.sum
 
 # Compiled binary output
 bin/
+iter-service
 
 # Iter session state (runtime artifacts)
 .iter/

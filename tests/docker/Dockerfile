@@ -1,7 +1,8 @@
 # Dockerfile for iter-service integration testing
 # Provides an isolated Linux environment for running tests
+# Always built fresh to ensure clean state
 
-FROM golang:1.21-bookworm
+FROM golang:1.23-bookworm
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
@@ -23,21 +24,14 @@ COPY . .
 # Build the binary
 RUN go build -o /usr/local/bin/iter-service ./cmd/iter-service
 
-# Create test user and directories
-RUN useradd -m -s /bin/bash testuser \
-    && mkdir -p /home/testuser/.iter-service \
-    && mkdir -p /app/tests/results \
-    && chown -R testuser:testuser /home/testuser \
-    && chown -R testuser:testuser /app/tests/results
-
-# Switch to test user
-USER testuser
-ENV HOME=/home/testuser
-ENV PATH="/usr/local/bin:${PATH}"
+# Create directories with proper permissions
+# Results dir is mounted from host, but we need the parent
+RUN mkdir -p /app/tests/results \
+    && chmod 777 /app/tests/results
 
 # Set test-specific environment
 ENV ITER_TEST_MODE=1
-ENV ITER_DATA_DIR=/home/testuser/.iter-service
+ENV PATH="/usr/local/bin:${PATH}"
 
-# Default command runs all tests
-CMD ["go", "test", "-v", "-timeout", "300s", "./tests/..."]
+# Default command runs all tests sequentially
+CMD ["go", "test", "-p", "1", "-v", "-timeout", "300s", "./tests/..."]

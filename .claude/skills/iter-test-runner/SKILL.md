@@ -1,6 +1,6 @@
 # iter-test-runner
 
-Run iter-service tests, analyze failures, fix code, and iterate until tests pass.
+Run iter-service tests in Docker, analyze failures, fix code, and iterate until tests pass.
 
 ## Usage
 
@@ -18,16 +18,17 @@ Run iter-service tests, analyze failures, fix code, and iterate until tests pass
 
 ## Description
 
-This skill runs iter-service integration tests and automatically fixes code issues to make tests pass.
+This skill runs iter-service integration tests in isolated Docker containers and automatically fixes code issues to make tests pass.
 
 **CRITICAL RULES:**
-1. **NEVER modify test files** - Tests are the source of truth
-2. **Fix only implementation code** - Modify files in `cmd/`, `internal/`, `pkg/`, `web/`
-3. **STOP conditions:**
+1. **ALWAYS use Docker** - Tests must run in isolated Docker containers
+2. **NEVER modify test files** - Tests are the source of truth
+3. **Fix only implementation code** - Modify files in `cmd/`, `internal/`, `pkg/`, `web/`
+4. **STOP conditions:**
    - Test structure is invalid (syntax errors, missing imports)
    - Test requirement is impossible (e.g., expects magic behavior)
    - Maximum 5 iterations reached without progress
-4. **Each iteration must save a summary** to `./tests/results/{datetime}-{testname}/`
+5. **Each iteration must save a summary** to `./tests/results/{type}/{datetime}-{testname}/`
 
 ## Workflow
 
@@ -38,13 +39,27 @@ Before running, verify the test file:
 2. Check test function signature is valid: `func Test*(t *testing.T)`
 3. If invalid, STOP and report: "Test structure invalid: {reason}"
 
-### Step 2: Run Test
+### Step 2: Run Test in Docker
 
 ```bash
 cd /home/bobmc/development/iter
-go build -o iter-service ./cmd/iter-service
-go test -v -timeout 120s -run {TestPattern} ./tests/... 2>&1 | tee /tmp/test-output.log
+
+# Run all tests
+./tests/run-tests.sh --all
+
+# Run specific test pattern
+./tests/run-tests.sh {TestPattern}
+
+# Run specific suite
+./tests/run-tests.sh --api
+./tests/run-tests.sh --service
+./tests/run-tests.sh --ui
 ```
+
+The test runner will:
+1. Build a fresh Docker image (--no-cache)
+2. Run tests in isolated container
+3. Collect results in `./tests/results/`
 
 ### Step 3: Analyze Results
 
@@ -75,7 +90,7 @@ Create summary file: `./tests/results/{datetime}-{testname}/iteration-{N}.json`
 2. Locate the source file causing the issue
 3. Apply minimal fix to make test pass
 4. **DO NOT modify test files** (tests/*.go)
-5. Rebuild: `go build -o iter-service ./cmd/iter-service`
+5. Run tests again in Docker
 
 ### Step 6: Iterate or Stop
 
@@ -97,7 +112,7 @@ Final output includes:
 Valid test files must:
 1. Be in `tests/service/`, `tests/api/`, or `tests/ui/` directories
 2. Import `"github.com/ternarybob/iter/tests/common"`
-3. Use `common.NewTestEnv(t, "test-name")` for setup
+3. Use `common.NewTestEnv(t, "type", "test-name")` for setup
 4. Call `env.Cleanup()` in defer
 5. Call `env.WriteSummary()` with results
 
@@ -105,7 +120,7 @@ Valid test files must:
 
 ```go
 func TestExample(t *testing.T) {
-    env := common.NewTestEnv(t, "example")
+    env := common.NewTestEnv(t, "api", "example")
     defer env.Cleanup()
 
     if err := env.Start(); err != nil {
@@ -126,3 +141,11 @@ STOP immediately and report if:
 3. Test expects behavior that contradicts architecture
 4. Same fix fails 3 times
 5. 5 iterations without progress
+
+## Docker Requirements
+
+The test runner always uses Docker:
+- Fresh container built each run (--no-cache)
+- Tests run sequentially (-p 1) to avoid port conflicts
+- Results mounted to host at `./tests/results/`
+- Isolated from host iter-service processes
