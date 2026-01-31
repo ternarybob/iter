@@ -169,8 +169,8 @@ func TestServiceIsolation(t *testing.T) {
 	common.AssertStatusCode(t, resp2, http.StatusOK)
 
 	env1.SaveJSON("isolation-results.json", map[string]interface{}{
-		"port1": env1.Port,
-		"port2": env2.Port,
+		"port1":    env1.Port,
+		"port2":    env2.Port,
 		"isolated": env1.Port != env2.Port,
 	})
 

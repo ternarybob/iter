@@ -73,14 +73,14 @@ type IndexConfig struct {
 
 // LoggingConfig contains logging settings.
 type LoggingConfig struct {
-	Level      string       `toml:"level"`
-	Format     string       `toml:"format"`
-	Output     StringSlice  `toml:"output"`
-	TimeFormat string       `toml:"time_format"`
-	MaxSizeMB  int          `toml:"max_size_mb"`
-	MaxBackups int          `toml:"max_backups"`
-	MaxAgeDays int          `toml:"max_age_days"`
-	Compress   bool         `toml:"compress"`
+	Level      string      `toml:"level"`
+	Format     string      `toml:"format"`
+	Output     StringSlice `toml:"output"`
+	TimeFormat string      `toml:"time_format"`
+	MaxSizeMB  int         `toml:"max_size_mb"`
+	MaxBackups int         `toml:"max_backups"`
+	MaxAgeDays int         `toml:"max_age_days"`
+	Compress   bool        `toml:"compress"`
 }
 
 // StringSlice is a custom type that can unmarshal from either a string or []string.

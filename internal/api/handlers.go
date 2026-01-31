@@ -61,6 +61,25 @@ type IndexStatsResponse struct {
 	LastUpdated   string `json:"last_updated"`
 }
 
+// IndexStatusResponse represents the overall index status including API key status.
+type IndexStatusResponse struct {
+	GeminiAPIKeyConfigured bool                         `json:"gemini_api_key_configured"`
+	GeminiAPIKeyStatus     string                       `json:"gemini_api_key_status"`
+	Projects               []ProjectIndexStatusResponse `json:"projects"`
+}
+
+// ProjectIndexStatusResponse represents index status for a single project.
+type ProjectIndexStatusResponse struct {
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	Path          string `json:"path"`
+	IndexStatus   string `json:"index_status"`
+	DocumentCount int    `json:"document_count"`
+	FileCount     int    `json:"file_count"`
+	ErrorMessage  string `json:"error_message,omitempty"`
+	LastUpdated   string `json:"last_updated,omitempty"`
+}
+
 // RegisterProjectRequest is the request body for registering a project.
 type RegisterProjectRequest struct {
 	Path string `json:"path"`
@@ -103,6 +122,60 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 		Version: version,
 		Service: "iter-service",
 	})
+}
+
+func (s *Server) handleIndexStatus(w http.ResponseWriter, r *http.Request) {
+	// Check GEMINI_API_KEY status
+	apiKeyConfigured := s.cfg.LLM.APIKey != ""
+	apiKeyStatus := "Not configured"
+	if apiKeyConfigured {
+		apiKeyStatus = "Configured"
+	} else {
+		apiKeyStatus = "GEMINI_API_KEY not provided"
+	}
+
+	// Get all projects and their index status
+	projects := s.registry.List()
+	projectStatuses := make([]ProjectIndexStatusResponse, 0, len(projects))
+
+	for _, p := range projects {
+		status := ProjectIndexStatusResponse{
+			ID:   p.ID,
+			Name: p.Name,
+			Path: p.Path,
+		}
+
+		idx := s.manager.GetIndexer(p.ID)
+		if idx == nil {
+			status.IndexStatus = "not_indexed"
+			status.ErrorMessage = "Indexer not initialized"
+		} else {
+			stats := idx.Stats()
+			status.DocumentCount = stats.DocumentCount
+			status.FileCount = stats.FileCount
+			status.LastUpdated = stats.LastUpdated.Format("2006-01-02T15:04:05Z")
+
+			if !apiKeyConfigured {
+				status.IndexStatus = "api_key_missing"
+				status.ErrorMessage = "GEMINI_API_KEY not provided - semantic indexing unavailable"
+			} else if stats.DocumentCount == 0 {
+				status.IndexStatus = "empty"
+				status.ErrorMessage = "No documents indexed"
+			} else {
+				status.IndexStatus = "indexed"
+			}
+		}
+
+		projectStatuses = append(projectStatuses, status)
+	}
+
+	response := IndexStatusResponse{
+		GeminiAPIKeyConfigured: apiKeyConfigured,
+		GeminiAPIKeyStatus:     apiKeyStatus,
+		Projects:               projectStatuses,
+	}
+
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) handleListProjects(w http.ResponseWriter, r *http.Request) {
@@ -448,6 +521,8 @@ func (s *Server) handleWebAssets(w http.ResponseWriter, r *http.Request) {
 		s.renderDocs(w, r)
 	case path == "/mcp":
 		s.renderMCP(w, r)
+	case path == "/index-status":
+		s.renderIndexStatus(w, r)
 	default:
 		http.NotFound(w, r)
 	}
@@ -677,6 +752,233 @@ func (s *Server) renderDocs(w http.ResponseWriter, r *http.Request) {
                     </tr>
                 </tbody>
             </table>
+        </div>
+    </main>
+</body>
+</html>`))
+}
+
+func (s *Server) renderIndexStatus(w http.ResponseWriter, r *http.Request) {
+	// Check GEMINI_API_KEY status
+	apiKeyConfigured := s.cfg.LLM.APIKey != ""
+	apiKeyStatus := "Configured"
+	apiKeyClass := "success"
+	if !apiKeyConfigured {
+		apiKeyStatus = "GEMINI_API_KEY not provided"
+		apiKeyClass = "error"
+	}
+
+	// Get all projects and their index status
+	projects := s.registry.List()
+
+	w.Header().Set("Content-Type", "text/html")
+	w.Write([]byte(fmt.Sprintf(`<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Index Status - iter-service</title>
+    <link rel="stylesheet" href="/web/static/styles.css">
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <style>
+        .status-card {
+            background-color: var(--surface-color);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+        .status-card h3 {
+            margin-top: 0;
+            margin-bottom: 1rem;
+            color: var(--text-color);
+        }
+        .status-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            font-weight: 500;
+        }
+        .status-indicator.success {
+            background-color: rgba(158, 206, 106, 0.1);
+            color: var(--success-color);
+            border: 1px solid var(--success-color);
+        }
+        .status-indicator.error {
+            background-color: rgba(247, 118, 142, 0.1);
+            color: var(--error-color);
+            border: 1px solid var(--error-color);
+        }
+        .status-indicator.warning {
+            background-color: rgba(224, 175, 104, 0.1);
+            color: var(--warning-color);
+            border: 1px solid var(--warning-color);
+        }
+        .project-status-table {
+            width: 100%%;
+            border-collapse: collapse;
+            margin-top: 1rem;
+        }
+        .project-status-table th,
+        .project-status-table td {
+            text-align: left;
+            padding: 0.75rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+        .project-status-table th {
+            color: var(--text-muted);
+            font-weight: 500;
+        }
+        .status-badge {
+            display: inline-block;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+        .status-badge.indexed {
+            background-color: rgba(158, 206, 106, 0.2);
+            color: var(--success-color);
+        }
+        .status-badge.empty {
+            background-color: rgba(224, 175, 104, 0.2);
+            color: var(--warning-color);
+        }
+        .status-badge.api_key_missing {
+            background-color: rgba(247, 118, 142, 0.2);
+            color: var(--error-color);
+        }
+        .status-badge.not_indexed {
+            background-color: rgba(169, 177, 214, 0.2);
+            color: var(--text-muted);
+        }
+        .refresh-btn {
+            float: right;
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <h1>
+            <a href="/" style="color: inherit;">
+                <svg class="logo" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+                </svg>
+                iter-service
+            </a>
+        </h1>
+        <nav>
+            <a href="/">Projects</a>
+            <a href="/web/index-status" class="active">Index Status</a>
+            <a href="/web/mcp">MCP Setup</a>
+            <a href="/web/settings">Settings</a>
+            <a href="/web/docs">API Docs</a>
+        </nav>
+    </header>
+    <main class="container">
+        <div class="card">
+            <div class="card-header">
+                <h2 class="card-title">Index Status</h2>
+                <button class="btn btn-secondary refresh-btn" onclick="location.reload()">
+                    Refresh
+                </button>
+            </div>
+
+            <div class="status-card">
+                <h3>API Configuration</h3>
+                <div>
+                    <strong>GEMINI_API_KEY:</strong>
+                    <span class="status-indicator %s">%s</span>
+                </div>
+            </div>
+
+            <div class="status-card">
+                <h3>Project Index Status</h3>`, apiKeyClass, apiKeyStatus)))
+
+	if len(projects) == 0 {
+		w.Write([]byte(`
+                <div class="empty-state">
+                    <p>No projects registered. Add a project to see index status.</p>
+                </div>`))
+	} else {
+		w.Write([]byte(`
+                <table class="project-status-table">
+                    <thead>
+                        <tr>
+                            <th>Project</th>
+                            <th>Path</th>
+                            <th>Status</th>
+                            <th>Documents</th>
+                            <th>Files</th>
+                            <th>Last Updated</th>
+                        </tr>
+                    </thead>
+                    <tbody>`))
+
+		for _, p := range projects {
+			idx := s.manager.GetIndexer(p.ID)
+			status := "not_indexed"
+			statusLabel := "Not Indexed"
+			docCount := 0
+			fileCount := 0
+			lastUpdated := "-"
+			errorMsg := ""
+
+			if idx != nil {
+				stats := idx.Stats()
+				docCount = stats.DocumentCount
+				fileCount = stats.FileCount
+				if !stats.LastUpdated.IsZero() {
+					lastUpdated = stats.LastUpdated.Format("Jan 2, 2006 3:04 PM")
+				}
+
+				if !apiKeyConfigured {
+					status = "api_key_missing"
+					statusLabel = "API Key Missing"
+					errorMsg = "GEMINI_API_KEY not provided"
+				} else if docCount == 0 {
+					status = "empty"
+					statusLabel = "Empty"
+				} else {
+					status = "indexed"
+					statusLabel = "Indexed"
+				}
+			} else {
+				errorMsg = "Indexer not initialized"
+			}
+
+			row := fmt.Sprintf(`
+                        <tr>
+                            <td><a href="/web/project/%s">%s</a></td>
+                            <td><code style="font-size: 0.8rem;">%s</code></td>
+                            <td>
+                                <span class="status-badge %s">%s</span>
+                                %s
+                            </td>
+                            <td>%d</td>
+                            <td>%d</td>
+                            <td>%s</td>
+                        </tr>`,
+				p.ID, p.Name, p.Path, status, statusLabel,
+				func() string {
+					if errorMsg != "" {
+						return fmt.Sprintf(`<br><small style="color: var(--error-color);">%s</small>`, errorMsg)
+					}
+					return ""
+				}(),
+				docCount, fileCount, lastUpdated)
+			w.Write([]byte(row))
+		}
+
+		w.Write([]byte(`
+                    </tbody>
+                </table>`))
+	}
+
+	w.Write([]byte(`
+            </div>
         </div>
     </main>
 </body>

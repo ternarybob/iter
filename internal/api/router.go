@@ -63,6 +63,7 @@ func (s *Server) setupRouter() {
 	// Health and version endpoints (no auth)
 	r.Get("/health", s.handleHealth)
 	r.Get("/version", s.handleVersion)
+	r.Get("/api/index-status", s.handleIndexStatus)
 
 	// API routes
 	r.Route("/projects", func(r chi.Router) {

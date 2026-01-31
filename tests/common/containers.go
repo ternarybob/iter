@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -26,44 +25,9 @@ const (
 )
 
 var (
-	buildOnce   sync.Once
-	buildErr    error
-	projectRoot string
+	buildOnce sync.Once
+	buildErr  error
 )
-
-// getProjectRoot finds the project root by looking for go.mod.
-func getProjectRoot() string {
-	if projectRoot != "" {
-		return projectRoot
-	}
-
-	// Try to find from this file's location first
-	_, thisFile, _, ok := runtime.Caller(0)
-	if ok {
-		// This file is at tests/containers/containers.go
-		// Project root is two levels up
-		dir := filepath.Dir(filepath.Dir(filepath.Dir(thisFile)))
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			projectRoot = dir
-			return dir
-		}
-	}
-
-	// Fallback to walking up from cwd
-	dir, _ := os.Getwd()
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			projectRoot = dir
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			projectRoot, _ = os.Getwd()
-			return projectRoot
-		}
-		dir = parent
-	}
-}
 
 // BuildImages builds the Docker images for testing.
 // Safe to call multiple times - only builds once per test run.
