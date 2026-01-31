@@ -66,10 +66,15 @@ The test runner will:
 ### Step 3: Analyze Results
 
 Results are saved to `./tests/results/{timestamp}-{suite}/` with these files:
-- `build.log` - Docker image build output
+- `SUMMARY.md` - Human-readable markdown summary for Claude
+- `summary.json` - Machine-readable JSON summary
 - `test-output.log` - Full container stdout/stderr
 - `test-summary.txt` - Extracted test pass/fail lines
-- `summary.json` - JSON summary:
+- `build.log` - Docker image build output
+
+**Read `SUMMARY.md` first** - it contains the test status, pass/fail counts, and lists of passed/failed tests.
+
+JSON summary format:
   ```json
   {
       "timestamp": "2026-01-31_14-51-33",

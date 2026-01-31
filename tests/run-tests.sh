@@ -156,6 +156,64 @@ cat > "$RUN_DIR/summary.json" <<EOF
 }
 EOF
 
+# Generate markdown summary for Claude
+if [ "$TEST_EXIT_CODE" -eq 0 ]; then
+    STATUS="PASS"
+else
+    STATUS="FAIL"
+fi
+
+# Extract test names
+PASSED_LIST=$(grep "^--- PASS" "$RUN_DIR/test-output.log" 2>/dev/null | sed 's/--- PASS: /- /' | sed 's/ (.*//' || true)
+FAILED_LIST=$(grep "^--- FAIL" "$RUN_DIR/test-output.log" 2>/dev/null | sed 's/--- FAIL: /- /' | sed 's/ (.*//' || true)
+
+cat > "$RUN_DIR/SUMMARY.md" <<EOF
+# Test Run Summary
+
+**Status:** $STATUS
+**Timestamp:** $TIMESTAMP
+**Suite:** $TEST_SUITE
+**Pattern:** ${TEST_PATTERN:-"(none)"}
+
+## Results
+
+| Metric | Value |
+|--------|-------|
+| Total | $TOTAL_TESTS |
+| Passed | $PASSED_TESTS |
+| Failed | $FAILED_TESTS |
+| Exit Code | $TEST_EXIT_CODE |
+
+## Passed Tests
+
+$PASSED_LIST
+
+EOF
+
+if [ "$FAILED_TESTS" -gt 0 ]; then
+    cat >> "$RUN_DIR/SUMMARY.md" <<EOF
+## Failed Tests
+
+$FAILED_LIST
+
+## Failure Details
+
+\`\`\`
+$(grep -A 20 "^--- FAIL" "$RUN_DIR/test-output.log" 2>/dev/null || echo "No details available")
+\`\`\`
+EOF
+fi
+
+cat >> "$RUN_DIR/SUMMARY.md" <<EOF
+
+## Files
+
+- \`summary.json\` - Machine-readable summary
+- \`test-output.log\` - Full test output
+- \`test-summary.txt\` - Pass/fail lines
+- \`build.log\` - Docker build output
+EOF
+
 echo ""
 echo "========================================"
 echo "Test Run Complete"
