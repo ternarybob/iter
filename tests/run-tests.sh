@@ -2,8 +2,7 @@
 # run-tests.sh - Test runner for iter-service
 #
 # Runs tests in completely isolated Docker containers.
-# No directories are shared between host and container.
-# Results are captured from container stdout/stderr.
+# Creates per-test results directories.
 #
 # Usage:
 #   ./tests/run-tests.sh [options] [test-pattern]
@@ -16,11 +15,11 @@
 #   --verbose     Verbose output
 #   --help        Show this help
 #
-# Examples:
-#   ./tests/run-tests.sh                    # Run all tests
-#   ./tests/run-tests.sh --all              # Run all tests
-#   ./tests/run-tests.sh --api              # Run API tests only
-#   ./tests/run-tests.sh TestAPISearch      # Run specific test
+# Results structure:
+#   tests/results/
+#   ├── service/{datetime}-{testname}/
+#   ├── api/{datetime}-{testname}/
+#   └── ui/{datetime}-{testname}/
 
 set -e
 
@@ -72,27 +71,31 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Create results directory
-mkdir -p "$RESULTS_DIR"
+# Create results directories for each test type
+mkdir -p "$RESULTS_DIR/service"
+mkdir -p "$RESULTS_DIR/api"
+mkdir -p "$RESULTS_DIR/ui"
 
 # Timestamp for this test run
 TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
-RUN_DIR="$RESULTS_DIR/$TIMESTAMP-$TEST_SUITE"
-mkdir -p "$RUN_DIR"
+
+# Temporary directory for raw output
+RAW_OUTPUT_DIR=$(mktemp -d)
+trap "rm -rf $RAW_OUTPUT_DIR" EXIT
 
 echo "========================================"
 echo "iter-service Test Runner (Docker)"
 echo "========================================"
 echo "Timestamp: $TIMESTAMP"
 echo "Suite: $TEST_SUITE"
-echo "Results: $RUN_DIR"
+echo "Results: $RESULTS_DIR/{service,api,ui}/"
 echo "========================================"
 
 cd "$PROJECT_DIR"
 
 # Build fresh Docker image
 echo "Building fresh Docker image..."
-docker compose -f tests/docker/docker-compose.yml build --no-cache test 2>&1 | tee "$RUN_DIR/build.log"
+docker compose -f tests/docker/docker-compose.yml build --no-cache test 2>&1 | tee "$RAW_OUTPUT_DIR/build.log"
 echo "Build complete."
 echo ""
 
@@ -123,55 +126,98 @@ TEST_CMD="$TEST_CMD $TEST_PATH"
 echo "Running: $TEST_CMD"
 echo ""
 
-# Run tests in isolated Docker container (no volume mounts)
-# Capture all output from the container
+# Run tests in isolated Docker container
 set +e
 docker compose -f tests/docker/docker-compose.yml run --rm \
     test \
-    sh -c "$TEST_CMD" 2>&1 | tee "$RUN_DIR/test-output.log"
+    sh -c "$TEST_CMD" 2>&1 | tee "$RAW_OUTPUT_DIR/test-output.log"
 TEST_EXIT_CODE=${PIPESTATUS[0]}
 set -e
 
-# Parse results from captured output
-TOTAL_TESTS=$(grep -c "^--- " "$RUN_DIR/test-output.log" 2>/dev/null) || TOTAL_TESTS=0
-PASSED_TESTS=$(grep -c "^--- PASS" "$RUN_DIR/test-output.log" 2>/dev/null) || PASSED_TESTS=0
-FAILED_TESTS=$(grep -c "^--- FAIL" "$RUN_DIR/test-output.log" 2>/dev/null) || FAILED_TESTS=0
+# Parse results and create per-test directories
+echo ""
+echo "Creating per-test result directories..."
 
-# Extract individual test results
-echo "Extracting test results..."
-grep "^=== RUN\|^--- PASS\|^--- FAIL\|^PASS\|^FAIL\|^ok\|^FAIL" "$RUN_DIR/test-output.log" > "$RUN_DIR/test-summary.txt" 2>/dev/null || true
+# Extract test names and their results
+while IFS= read -r line; do
+    if [[ "$line" =~ ^---\ (PASS|FAIL):\ ([A-Za-z0-9_]+) ]]; then
+        STATUS="${BASH_REMATCH[1]}"
+        TEST_NAME="${BASH_REMATCH[2]}"
 
-# Generate JSON summary
-cat > "$RUN_DIR/summary.json" <<EOF
+        # Determine test type from name
+        if [[ "$TEST_NAME" =~ ^TestService ]]; then
+            TEST_TYPE="service"
+            SHORT_NAME=$(echo "$TEST_NAME" | sed 's/^TestService//' | tr '[:upper:]' '[:lower:]')
+        elif [[ "$TEST_NAME" =~ ^TestAPI ]]; then
+            TEST_TYPE="api"
+            SHORT_NAME=$(echo "$TEST_NAME" | sed 's/^TestAPI//' | tr '[:upper:]' '[:lower:]')
+        elif [[ "$TEST_NAME" =~ ^TestUI ]]; then
+            TEST_TYPE="ui"
+            SHORT_NAME=$(echo "$TEST_NAME" | sed 's/^TestUI//' | tr '[:upper:]' '[:lower:]')
+        else
+            TEST_TYPE="other"
+            SHORT_NAME=$(echo "$TEST_NAME" | sed 's/^Test//' | tr '[:upper:]' '[:lower:]')
+        fi
+
+        # Create test-specific results directory
+        TEST_DIR="$RESULTS_DIR/$TEST_TYPE/$TIMESTAMP-$SHORT_NAME"
+        mkdir -p "$TEST_DIR"
+
+        # Extract test-specific output
+        awk "/^=== RUN   $TEST_NAME\$/,/^--- (PASS|FAIL): $TEST_NAME/" "$RAW_OUTPUT_DIR/test-output.log" > "$TEST_DIR/test-output.log" 2>/dev/null || true
+
+        # Create test summary
+        cat > "$TEST_DIR/summary.json" <<EOF
 {
+    "test_name": "$TEST_NAME",
+    "status": "$STATUS",
+    "type": "$TEST_TYPE",
     "timestamp": "$TIMESTAMP",
-    "suite": "$TEST_SUITE",
-    "test_pattern": "$TEST_PATTERN",
-    "total_tests": $TOTAL_TESTS,
-    "passed": $PASSED_TESTS,
-    "failed": $FAILED_TESTS,
-    "exit_code": $TEST_EXIT_CODE,
-    "isolated": true,
     "docker": true
 }
 EOF
 
-# Generate markdown summary for Claude
+        # Create markdown summary
+        cat > "$TEST_DIR/SUMMARY.md" <<EOF
+# $TEST_NAME
+
+**Status:** $STATUS
+**Type:** $TEST_TYPE
+**Timestamp:** $TIMESTAMP
+
+## Output
+
+\`\`\`
+$(cat "$TEST_DIR/test-output.log" 2>/dev/null || echo "No output captured")
+\`\`\`
+EOF
+
+        echo "  Created: $TEST_TYPE/$TIMESTAMP-$SHORT_NAME/ ($STATUS)"
+    fi
+done < "$RAW_OUTPUT_DIR/test-output.log"
+
+# Parse overall results
+TOTAL_TESTS=$(grep -c "^--- " "$RAW_OUTPUT_DIR/test-output.log" 2>/dev/null) || TOTAL_TESTS=0
+PASSED_TESTS=$(grep -c "^--- PASS" "$RAW_OUTPUT_DIR/test-output.log" 2>/dev/null) || PASSED_TESTS=0
+FAILED_TESTS=$(grep -c "^--- FAIL" "$RAW_OUTPUT_DIR/test-output.log" 2>/dev/null) || FAILED_TESTS=0
+
+# Create overall run summary in results root
+RUN_SUMMARY_DIR="$RESULTS_DIR/_runs"
+mkdir -p "$RUN_SUMMARY_DIR"
+
 if [ "$TEST_EXIT_CODE" -eq 0 ]; then
     STATUS="PASS"
 else
     STATUS="FAIL"
 fi
 
-# Extract test names
-PASSED_LIST=$(grep "^--- PASS" "$RUN_DIR/test-output.log" 2>/dev/null | sed 's/--- PASS: /- /' | sed 's/ (.*//' || true)
-FAILED_LIST=$(grep "^--- FAIL" "$RUN_DIR/test-output.log" 2>/dev/null | sed 's/--- FAIL: /- /' | sed 's/ (.*//' || true)
+PASSED_LIST=$(grep "^--- PASS" "$RAW_OUTPUT_DIR/test-output.log" 2>/dev/null | sed 's/--- PASS: /- /' | sed 's/ (.*//' || true)
+FAILED_LIST=$(grep "^--- FAIL" "$RAW_OUTPUT_DIR/test-output.log" 2>/dev/null | sed 's/--- FAIL: /- /' | sed 's/ (.*//' || true)
 
-cat > "$RUN_DIR/SUMMARY.md" <<EOF
-# Test Run Summary
+cat > "$RUN_SUMMARY_DIR/$TIMESTAMP-$TEST_SUITE.md" <<EOF
+# Test Run: $TIMESTAMP
 
 **Status:** $STATUS
-**Timestamp:** $TIMESTAMP
 **Suite:** $TEST_SUITE
 **Pattern:** ${TEST_PATTERN:-"(none)"}
 
@@ -191,28 +237,15 @@ $PASSED_LIST
 EOF
 
 if [ "$FAILED_TESTS" -gt 0 ]; then
-    cat >> "$RUN_DIR/SUMMARY.md" <<EOF
+    cat >> "$RUN_SUMMARY_DIR/$TIMESTAMP-$TEST_SUITE.md" <<EOF
 ## Failed Tests
 
 $FAILED_LIST
-
-## Failure Details
-
-\`\`\`
-$(grep -A 20 "^--- FAIL" "$RUN_DIR/test-output.log" 2>/dev/null || echo "No details available")
-\`\`\`
 EOF
 fi
 
-cat >> "$RUN_DIR/SUMMARY.md" <<EOF
-
-## Files
-
-- \`summary.json\` - Machine-readable summary
-- \`test-output.log\` - Full test output
-- \`test-summary.txt\` - Pass/fail lines
-- \`build.log\` - Docker build output
-EOF
+# Copy build log to runs directory
+cp "$RAW_OUTPUT_DIR/build.log" "$RUN_SUMMARY_DIR/$TIMESTAMP-build.log"
 
 echo ""
 echo "========================================"
@@ -222,14 +255,17 @@ echo "Total: $TOTAL_TESTS"
 echo "Passed: $PASSED_TESTS"
 echo "Failed: $FAILED_TESTS"
 echo "Exit Code: $TEST_EXIT_CODE"
-echo "Results: $RUN_DIR"
+echo ""
+echo "Results:"
+echo "  Per-test: $RESULTS_DIR/{service,api,ui}/$TIMESTAMP-*/"
+echo "  Run summary: $RUN_SUMMARY_DIR/$TIMESTAMP-$TEST_SUITE.md"
 echo "========================================"
 
 # Show failed tests if any
 if [ "$FAILED_TESTS" -gt 0 ]; then
     echo ""
     echo "Failed tests:"
-    grep "^--- FAIL" "$RUN_DIR/test-output.log" || true
+    grep "^--- FAIL" "$RAW_OUTPUT_DIR/test-output.log" || true
 fi
 
 # Cleanup containers

@@ -1,6 +1,6 @@
 # iter-test-runner
 
-Run iter-service tests in isolated Docker containers, analyze failures, fix code, and iterate until tests pass.
+Run iter-service tests, capture screenshots, analyze failures, fix code, and iterate until tests pass.
 
 ## Usage
 
@@ -18,95 +18,123 @@ Run iter-service tests in isolated Docker containers, analyze failures, fix code
 
 ## Description
 
-This skill runs iter-service integration tests in completely isolated Docker containers. No directories are shared between the host and container - results are captured from container stdout/stderr.
+This skill runs iter-service integration tests and automatically fixes code issues to make tests pass.
 
 **CRITICAL RULES:**
-1. **ALWAYS use Docker** - Tests run in isolated containers with no shared directories
+1. **ALWAYS use Docker** - Tests run in isolated containers
 2. **NEVER modify test files** - Tests are the source of truth
 3. **Fix only implementation code** - Modify files in `cmd/`, `internal/`, `pkg/`, `web/`
-4. **STOP conditions:**
+4. **UI tests MUST capture screenshots** - Use agent-browser for actual browser screenshots
+5. **Each test has its own results directory** - Enforce structure below
+6. **STOP conditions:**
    - Test structure is invalid (syntax errors, missing imports)
-   - Test requirement is impossible (e.g., expects magic behavior)
+   - Test requirement is impossible
    - Maximum 5 iterations reached without progress
-5. **Results captured from stdout** - Container output is captured and parsed
+
+## Results Directory Structure (MANDATORY)
+
+Each test MUST have its own results directory:
+
+```
+tests/results/
+├── service/
+│   └── {datetime}-{testname}/
+│       ├── SUMMARY.md
+│       ├── test-output.log
+│       └── summary.json
+├── api/
+│   └── {datetime}-{testname}/
+│       ├── SUMMARY.md
+│       ├── test-output.log
+│       └── summary.json
+└── ui/
+    └── {datetime}-{testname}/
+        ├── SUMMARY.md
+        ├── test-output.log
+        ├── summary.json
+        ├── 01-home-page.png        # REQUIRED: Browser screenshots
+        ├── 02-project-list.png
+        └── ...
+```
+
+**Directory naming:** `{YYYY-MM-DD_HH-MM-SS}-{testname}`
+- Example: `2026-01-31_15-30-00-home-page`
 
 ## Workflow
 
 ### Step 1: Validate Test Structure
 
-Before running, verify the test file compiles:
 ```bash
 go build ./tests/...
 ```
 If invalid, STOP and report: "Test structure invalid: {reason}"
 
-### Step 2: Run Test in Docker
+### Step 2: Run Tests in Docker
 
 ```bash
 cd /home/bobmc/development/iter
-
-# Run all tests
 ./tests/run-tests.sh --all
-
-# Run specific test pattern
-./tests/run-tests.sh {TestPattern}
-
-# Run specific suite
-./tests/run-tests.sh --api
-./tests/run-tests.sh --service
-./tests/run-tests.sh --ui
 ```
 
-The test runner will:
-1. Build a fresh Docker image (--no-cache)
-2. Run tests in completely isolated container (no volume mounts)
-3. Capture all output from container stdout/stderr
-4. Parse results and save to `./tests/results/{timestamp}-{suite}/`
+### Step 3: Capture UI Screenshots (UI Tests Only)
 
-### Step 3: Analyze Results
+**MANDATORY for all UI tests** - After Docker tests pass, capture actual browser screenshots:
 
-Results are saved to `./tests/results/{timestamp}-{suite}/` with these files:
-- `SUMMARY.md` - Human-readable markdown summary for Claude
-- `summary.json` - Machine-readable JSON summary
-- `test-output.log` - Full container stdout/stderr
-- `test-summary.txt` - Extracted test pass/fail lines
-- `build.log` - Docker image build output
+1. Start iter-service locally:
+   ```bash
+   ./bin/iter-service serve &
+   ```
 
-**Read `SUMMARY.md` first** - it contains the test status, pass/fail counts, and lists of passed/failed tests.
+2. Use agent-browser to capture each UI page:
+   ```bash
+   # Create results directory
+   RESULTS_DIR="tests/results/ui/$(date +%Y-%m-%d_%H-%M-%S)-{testname}"
+   mkdir -p "$RESULTS_DIR"
 
-JSON summary format:
-  ```json
-  {
-      "timestamp": "2026-01-31_14-51-33",
-      "suite": "all",
-      "test_pattern": "",
-      "total_tests": 18,
-      "passed": 18,
-      "failed": 0,
-      "exit_code": 0,
-      "isolated": true,
-      "docker": true
-  }
-  ```
+   # Capture screenshots
+   agent-browser open http://localhost:8420/web/
+   agent-browser screenshot "$RESULTS_DIR/01-home-page.png"
 
-Parse test-output.log for:
+   agent-browser open http://localhost:8420/web/settings
+   agent-browser screenshot "$RESULTS_DIR/02-settings.png"
+
+   agent-browser open http://localhost:8420/web/docs
+   agent-browser screenshot "$RESULTS_DIR/03-docs.png"
+
+   agent-browser close
+   ```
+
+3. Stop iter-service:
+   ```bash
+   pkill -f iter-service
+   ```
+
+**Required screenshots for UI tests:**
+- `01-home-page.png` - Home/Projects page
+- `02-settings.png` - Settings page
+- `03-docs.png` - API Documentation page
+- `04-project-detail.png` - Project detail page (if project exists)
+- Additional screenshots as needed for specific UI tests
+
+### Step 4: Analyze Results
+
+Read `SUMMARY.md` from the results directory:
 - `--- PASS`: Test passed
-- `--- FAIL`: Test failed - extract error message and proceed to fix
-- Build errors: Analyze compilation error
+- `--- FAIL`: Extract failure reason, proceed to fix
 
-### Step 4: Apply Fix (if tests failed)
+### Step 5: Apply Fix (if tests failed)
 
 1. Read error message from test-output.log
-2. Identify root cause from the error
-3. Locate the source file causing the issue
-4. Apply minimal fix to make test pass
+2. Identify root cause
+3. Locate source file causing the issue
+4. Apply minimal fix
 5. **DO NOT modify test files** (tests/*.go)
-6. Run tests again in Docker
+6. Re-run tests
 
-### Step 5: Iterate or Stop
+### Step 6: Iterate or Stop
 
 - If test passes: Report success, DONE
-- If 5 iterations reached: Report failure with all attempts, STOP
+- If 5 iterations reached: Report failure, STOP
 - If same error repeats 3 times: STOP with "Unable to fix: {reason}"
 - Otherwise: Go to Step 2
 
@@ -117,34 +145,39 @@ Final output includes:
 2. Number of iterations
 3. Summary of fixes applied
 4. Path to results directory
+5. **List of captured screenshots** (for UI tests)
 
-## Test Structure
+## Test Suites
 
-Tests are located in:
-- `tests/service/` - Service lifecycle tests
-- `tests/api/` - REST API tests
-- `tests/ui/` - Web UI tests
-- `tests/common/` - Shared test utilities
+| Suite | Location | Screenshots Required |
+|-------|----------|---------------------|
+| service | `tests/service/` | No |
+| api | `tests/api/` | No |
+| ui | `tests/ui/` | **YES - MANDATORY** |
 
-Valid test files must:
-1. Import `"github.com/ternarybob/iter/tests/common"`
-2. Use `common.NewTestEnv(t, "type", "test-name")` for setup
-3. Call `defer env.Cleanup()`
-4. Call `env.Start()` to start the service
+## UI Screenshot Requirements
 
-Example:
-```go
-func TestExample(t *testing.T) {
-    env := common.NewTestEnv(t, "api", "example")
-    defer env.Cleanup()
+For UI tests, you MUST:
+1. Start iter-service locally after Docker tests pass
+2. Use `agent-browser` to navigate to each page
+3. Capture PNG screenshots to the test's results directory
+4. Include screenshot paths in the SUMMARY.md
 
-    if err := env.Start(); err != nil {
-        t.Fatalf("Failed to start: %v", err)
-    }
+Example screenshot capture workflow:
+```bash
+# After Docker tests pass
+./scripts/build.sh -deploy
+cd bin && ./iter-service serve &
+sleep 2
 
-    client := env.NewHTTPClient()
-    // Test logic using client.Get(), client.Post(), etc.
-}
+# Capture screenshots
+agent-browser open http://localhost:8420/web/
+agent-browser wait --load networkidle
+agent-browser screenshot tests/results/ui/{datetime}-{test}/01-home.png --full
+
+# Continue for each page...
+agent-browser close
+pkill -f iter-service
 ```
 
 ## Stop Conditions
@@ -154,12 +187,11 @@ STOP immediately and report if:
 2. Test expects behavior that contradicts architecture
 3. Same fix fails 3 times
 4. 5 iterations without progress
+5. **UI test without screenshots** - Screenshots are mandatory
 
 ## Docker Isolation
 
-The test runner provides complete isolation:
 - Fresh container built each run (--no-cache)
-- **No volume mounts** - container is completely isolated from host
-- Tests run sequentially (-p 1) to avoid port conflicts
-- Results captured from container stdout/stderr
-- Container is removed after tests complete
+- No volume mounts - container is isolated
+- Tests run sequentially (-p 1)
+- Results captured from stdout/stderr
