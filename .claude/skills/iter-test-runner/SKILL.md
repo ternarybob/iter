@@ -24,7 +24,7 @@ This skill runs iter-service integration tests and automatically fixes code issu
 1. **ALWAYS use Docker** - Tests run in isolated containers
 2. **NEVER modify test files** - Tests are the source of truth
 3. **Fix only implementation code** - Modify files in `cmd/`, `internal/`, `pkg/`, `web/`
-4. **UI tests MUST capture screenshots** - Use agent-browser for actual browser screenshots
+4. **UI tests MUST capture screenshots** - Tests use chromedp to capture PNG screenshots
 5. **Each test has its own results directory** - Enforce structure below
 6. **STOP conditions:**
    - Test structure is invalid (syntax errors, missing imports)
@@ -52,13 +52,36 @@ tests/results/
         ├── SUMMARY.md
         ├── test-output.log
         ├── summary.json
-        ├── 01-home-page.png        # REQUIRED: Browser screenshots
-        ├── 02-project-list.png
-        └── ...
+        ├── 01-before.png           # REQUIRED: Before state
+        └── 02-after.png            # REQUIRED: After state
 ```
 
 **Directory naming:** `{YYYY-MM-DD_HH-MM-SS}-{testname}`
 - Example: `2026-01-31_15-30-00-home-page`
+
+## UI Screenshot Template (MANDATORY)
+
+Every UI test MUST capture before/after PNG screenshots using chromedp:
+
+| Screenshot | Description |
+|------------|-------------|
+| `01-before.png` | Initial state before test actions |
+| `02-after.png` | Final state after test actions |
+
+Some tests may have additional screenshots (e.g., `02-settings.png`, `03-docs.png`) but ALL UI tests MUST have at least `01-before.png` and a final screenshot.
+
+### Test-Specific Screenshot Requirements
+
+| Test | Required Screenshots |
+|------|---------------------|
+| TestUIHomePage | `01-before.png`, `02-after.png` |
+| TestUIStyles | `01-before.png`, `02-after.png` |
+| TestUIProjectList | `01-before.png`, `02-after.png` |
+| TestUIProjectPage | `01-before.png`, `02-after.png` |
+| TestUIDocsPage | `01-before.png`, `02-after.png` |
+| TestUISettingsPage | `01-before.png`, `02-after.png` |
+| TestUINavigation | `01-before.png`, `02-settings.png`, `03-docs.png`, `04-after.png` |
+| TestUISearchResults | `01-before.png`, `02-after.png` |
 
 ## Workflow
 
@@ -76,51 +99,36 @@ cd /home/bobmc/development/iter
 ./tests/run-tests.sh --all
 ```
 
-### Step 3: Capture UI Screenshots (UI Tests Only)
+**Note:** UI tests use chromedp to capture screenshots automatically. Chrome/Chromium must be available in the Docker container.
 
-**MANDATORY for all UI tests** - After Docker tests pass, capture actual browser screenshots:
+### Step 3: Verify UI Screenshots Exist
 
-1. Start iter-service locally:
-   ```bash
-   ./bin/iter-service serve &
-   ```
+After tests complete, verify each UI test directory contains the required PNG screenshots:
 
-2. Use agent-browser to capture each UI page:
-   ```bash
-   # Create results directory
-   RESULTS_DIR="tests/results/ui/$(date +%Y-%m-%d_%H-%M-%S)-{testname}"
-   mkdir -p "$RESULTS_DIR"
+```bash
+# Check for required screenshots
+for dir in tests/results/ui/*/; do
+    if [[ ! -f "$dir/01-before.png" ]]; then
+        echo "FAIL: Missing 01-before.png in $dir"
+    fi
+    # Check for at least one "after" screenshot
+    if ! ls "$dir"/*-after.png &>/dev/null && ! ls "$dir"/02-*.png &>/dev/null; then
+        echo "FAIL: Missing after screenshot in $dir"
+    fi
+done
+```
 
-   # Capture screenshots
-   agent-browser open http://localhost:8420/web/
-   agent-browser screenshot "$RESULTS_DIR/01-home-page.png"
-
-   agent-browser open http://localhost:8420/web/settings
-   agent-browser screenshot "$RESULTS_DIR/02-settings.png"
-
-   agent-browser open http://localhost:8420/web/docs
-   agent-browser screenshot "$RESULTS_DIR/03-docs.png"
-
-   agent-browser close
-   ```
-
-3. Stop iter-service:
-   ```bash
-   pkill -f iter-service
-   ```
-
-**Required screenshots for UI tests:**
-- `01-home-page.png` - Home/Projects page
-- `02-settings.png` - Settings page
-- `03-docs.png` - API Documentation page
-- `04-project-detail.png` - Project detail page (if project exists)
-- Additional screenshots as needed for specific UI tests
+If screenshots are missing, the test has FAILED even if the Go test passed.
 
 ### Step 4: Analyze Results
 
 Read `SUMMARY.md` from the results directory:
-- `--- PASS`: Test passed
+- `--- PASS`: Test passed (verify screenshots exist for UI tests)
 - `--- FAIL`: Extract failure reason, proceed to fix
+
+**For UI tests:** A test is ONLY considered passing if:
+1. The Go test passed
+2. All required PNG screenshots exist in the results directory
 
 ### Step 5: Apply Fix (if tests failed)
 
@@ -133,7 +141,7 @@ Read `SUMMARY.md` from the results directory:
 
 ### Step 6: Iterate or Stop
 
-- If test passes: Report success, DONE
+- If test passes AND screenshots exist: Report success, DONE
 - If 5 iterations reached: Report failure, STOP
 - If same error repeats 3 times: STOP with "Unable to fix: {reason}"
 - Otherwise: Go to Step 2
@@ -145,7 +153,28 @@ Final output includes:
 2. Number of iterations
 3. Summary of fixes applied
 4. Path to results directory
-5. **List of captured screenshots** (for UI tests)
+5. **Screenshot verification** (for UI tests)
+
+Example output:
+```
+## Test Results
+
+**Result: PASS**
+**Iterations:** 1
+
+### UI Test Screenshots Verified
+
+| Test | Before | After | Status |
+|------|--------|-------|--------|
+| TestUIHomePage | 01-before.png | 02-after.png | OK |
+| TestUIProjectList | 01-before.png | 02-after.png | OK |
+...
+
+### Results Directories
+- tests/results/ui/2026-01-31_16-07-38-homepage/
+- tests/results/ui/2026-01-31_16-07-38-projectlist/
+...
+```
 
 ## Test Suites
 
@@ -153,31 +182,34 @@ Final output includes:
 |-------|----------|---------------------|
 | service | `tests/service/` | No |
 | api | `tests/api/` | No |
-| ui | `tests/ui/` | **YES - MANDATORY** |
+| ui | `tests/ui/` | **YES - chromedp captures before/after PNGs** |
 
-## UI Screenshot Requirements
+## UI Test Implementation
 
-For UI tests, you MUST:
-1. Start iter-service locally after Docker tests pass
-2. Use `agent-browser` to navigate to each page
-3. Capture PNG screenshots to the test's results directory
-4. Include screenshot paths in the SUMMARY.md
+UI tests use chromedp (Go Chrome DevTools Protocol library) to capture real browser screenshots:
 
-Example screenshot capture workflow:
-```bash
-# After Docker tests pass
-./scripts/build.sh -deploy
-cd bin && ./iter-service serve &
-sleep 2
+```go
+// Example from ui_test.go
+browser, err := env.NewBrowser()
+if err != nil {
+    t.Fatalf("Failed to create browser: %v", err)
+}
+defer browser.Close()
 
-# Capture screenshots
-agent-browser open http://localhost:8420/web/
-agent-browser wait --load networkidle
-agent-browser screenshot tests/results/ui/{datetime}-{test}/01-home.png --full
+// Capture before screenshot
+if err := browser.NavigateAndScreenshot("/web/", "01-before"); err != nil {
+    t.Fatalf("Failed to capture before screenshot: %v", err)
+}
 
-# Continue for each page...
-agent-browser close
-pkill -f iter-service
+// ... perform test actions ...
+
+// Capture after screenshot
+if err := browser.FullPageScreenshot("02-after"); err != nil {
+    t.Fatalf("Failed to capture after screenshot: %v", err)
+}
+
+// Verify screenshots exist (test will fail if missing)
+env.RequireScreenshots([]string{"01-before", "02-after"})
 ```
 
 ## Stop Conditions
@@ -187,11 +219,11 @@ STOP immediately and report if:
 2. Test expects behavior that contradicts architecture
 3. Same fix fails 3 times
 4. 5 iterations without progress
-5. **UI test without screenshots** - Screenshots are mandatory
+5. **UI test missing PNG screenshots** - Screenshots are mandatory
 
-## Docker Isolation
+## Docker Requirements
 
 - Fresh container built each run (--no-cache)
-- No volume mounts - container is isolated
+- **Chromium/Chrome must be installed** for UI tests
 - Tests run sequentially (-p 1)
 - Results captured from stdout/stderr

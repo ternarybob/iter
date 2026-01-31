@@ -1,5 +1,5 @@
 # Docker Compose for iter-service testing
-# Completely isolated containers - no shared directories with host
+# Results directory is mounted to persist screenshots and test artifacts
 
 services:
   # Run all tests (default)
@@ -9,6 +9,10 @@ services:
       dockerfile: tests/docker/Dockerfile
     environment:
       - ITER_TEST_MODE=1
+      - CHROME_BIN=/usr/bin/chromium
+      - CHROMEDP_NO_SANDBOX=true
+    volumes:
+      - ../results:/app/tests/results
     command: go test -p 1 -v -timeout 300s ./tests/...
 
   # Run service tests only
@@ -18,6 +22,8 @@ services:
       dockerfile: tests/docker/Dockerfile
     environment:
       - ITER_TEST_MODE=1
+    volumes:
+      - ../results:/app/tests/results
     command: go test -p 1 -v -timeout 120s ./tests/service/...
 
   # Run API tests only
@@ -27,6 +33,8 @@ services:
       dockerfile: tests/docker/Dockerfile
     environment:
       - ITER_TEST_MODE=1
+    volumes:
+      - ../results:/app/tests/results
     command: go test -p 1 -v -timeout 120s ./tests/api/...
 
   # Run UI tests only
@@ -36,6 +44,10 @@ services:
       dockerfile: tests/docker/Dockerfile
     environment:
       - ITER_TEST_MODE=1
+      - CHROME_BIN=/usr/bin/chromium
+      - CHROMEDP_NO_SANDBOX=true
+    volumes:
+      - ../results:/app/tests/results
     command: go test -p 1 -v -timeout 120s ./tests/ui/...
 
   # Interactive shell for debugging
@@ -45,6 +57,10 @@ services:
       dockerfile: tests/docker/Dockerfile
     environment:
       - ITER_TEST_MODE=1
+      - CHROME_BIN=/usr/bin/chromium
+      - CHROMEDP_NO_SANDBOX=true
+    volumes:
+      - ../results:/app/tests/results
     command: /bin/bash
     stdin_open: true
     tty: true

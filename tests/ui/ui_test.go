@@ -1,4 +1,5 @@
 // Package ui contains integration tests for iter-service web UI.
+// All UI tests MUST capture before/after screenshots using chromedp.
 package ui
 
 import (
@@ -21,18 +22,25 @@ func TestUIHomePage(t *testing.T) {
 		t.Fatalf("Failed to start service: %v", err)
 	}
 
-	client := env.NewHTTPClient()
+	// Create browser for screenshots
+	browser, err := env.NewBrowser()
+	if err != nil {
+		t.Fatalf("Failed to create browser: %v", err)
+	}
+	defer browser.Close()
 
-	// Fetch home page
+	// Before screenshot - initial page load
+	if err := browser.NavigateAndScreenshot("/web/", "01-before"); err != nil {
+		t.Fatalf("Failed to capture before screenshot: %v", err)
+	}
+
+	// Verify page content via HTTP client
+	client := env.NewHTTPClient()
 	html, err := client.GetHTML("/web/")
 	if err != nil {
 		t.Fatalf("Failed to get home page: %v", err)
 	}
 
-	// Save screenshot
-	env.SaveScreenshot("01-home-page", html)
-
-	// Verify essential elements
 	htmlStr := string(html)
 
 	// Check for title
@@ -60,6 +68,14 @@ func TestUIHomePage(t *testing.T) {
 		t.Error("Expected HTMX script include")
 	}
 
+	// After screenshot - page fully loaded
+	if err := browser.FullPageScreenshot("02-after"); err != nil {
+		t.Fatalf("Failed to capture after screenshot: %v", err)
+	}
+
+	// Verify required screenshots exist
+	env.RequireScreenshots([]string{"01-before", "02-after"})
+
 	duration := time.Since(startTime)
 	env.WriteSummary(true, duration, "Home page loaded with all expected elements")
 }
@@ -73,6 +89,18 @@ func TestUIStyles(t *testing.T) {
 
 	if err := env.Start(); err != nil {
 		t.Fatalf("Failed to start service: %v", err)
+	}
+
+	// Create browser for screenshots
+	browser, err := env.NewBrowser()
+	if err != nil {
+		t.Fatalf("Failed to create browser: %v", err)
+	}
+	defer browser.Close()
+
+	// Before screenshot - home page before CSS verification
+	if err := browser.NavigateAndScreenshot("/web/", "01-before"); err != nil {
+		t.Fatalf("Failed to capture before screenshot: %v", err)
 	}
 
 	client := env.NewHTTPClient()
@@ -115,6 +143,14 @@ func TestUIStyles(t *testing.T) {
 		t.Error("Expected .btn CSS class")
 	}
 
+	// After screenshot - shows styled page
+	if err := browser.FullPageScreenshot("02-after"); err != nil {
+		t.Fatalf("Failed to capture after screenshot: %v", err)
+	}
+
+	// Verify required screenshots exist
+	env.RequireScreenshots([]string{"01-before", "02-after"})
+
 	duration := time.Since(startTime)
 	env.WriteSummary(true, duration, "CSS styles served correctly")
 }
@@ -130,14 +166,28 @@ func TestUIProjectList(t *testing.T) {
 		t.Fatalf("Failed to start service: %v", err)
 	}
 
+	// Create browser for screenshots
+	browser, err := env.NewBrowser()
+	if err != nil {
+		t.Fatalf("Failed to create browser: %v", err)
+	}
+	defer browser.Close()
+
 	client := env.NewHTTPClient()
 
-	// Fetch empty project list
+	// Before screenshot - empty project list
+	if err := browser.NavigateAndScreenshot("/web/", "01-before"); err != nil {
+		t.Fatalf("Failed to capture before screenshot: %v", err)
+	}
+
+	// Wait for HTMX to load project list
+	browser.Sleep(500 * time.Millisecond)
+
+	// Fetch empty project list via API
 	html, err := client.GetHTML("/api/projects-list")
 	if err != nil {
 		t.Fatalf("Failed to get project list: %v", err)
 	}
-	env.SaveScreenshot("01-empty-list", html)
 
 	// Verify empty state message
 	if !strings.Contains(string(html), "No projects registered") {
@@ -162,7 +212,6 @@ func TestUIProjectList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get project list: %v", err)
 	}
-	env.SaveScreenshot("02-list-with-project", html)
 
 	// Verify project is in list
 	htmlStr := string(html)
@@ -181,6 +230,18 @@ func TestUIProjectList(t *testing.T) {
 		t.Error("Expected Remove button")
 	}
 
+	// After screenshot - project list with project
+	if err := browser.Navigate("/web/"); err != nil {
+		t.Fatalf("Failed to navigate for after screenshot: %v", err)
+	}
+	browser.Sleep(500 * time.Millisecond) // Wait for HTMX
+	if err := browser.FullPageScreenshot("02-after"); err != nil {
+		t.Fatalf("Failed to capture after screenshot: %v", err)
+	}
+
+	// Verify required screenshots exist
+	env.RequireScreenshots([]string{"01-before", "02-after"})
+
 	duration := time.Since(startTime)
 	env.WriteSummary(true, duration, "Project list UI working correctly")
 }
@@ -195,6 +256,13 @@ func TestUIProjectPage(t *testing.T) {
 	if err := env.Start(); err != nil {
 		t.Fatalf("Failed to start service: %v", err)
 	}
+
+	// Create browser for screenshots
+	browser, err := env.NewBrowser()
+	if err != nil {
+		t.Fatalf("Failed to create browser: %v", err)
+	}
+	defer browser.Close()
 
 	client := env.NewHTTPClient()
 
@@ -214,12 +282,16 @@ func TestUIProjectPage(t *testing.T) {
 	created := common.AssertJSON(t, body)
 	projectID := created["id"].(string)
 
-	// Fetch project page (before indexing)
+	// Before screenshot - project page before indexing
+	if err := browser.NavigateAndScreenshot("/web/project/"+projectID, "01-before"); err != nil {
+		t.Fatalf("Failed to capture before screenshot: %v", err)
+	}
+
+	// Fetch project page via HTTP
 	html, err := client.GetHTML("/web/project/" + projectID)
 	if err != nil {
 		t.Fatalf("Failed to get project page: %v", err)
 	}
-	env.SaveScreenshot("01-project-before-index", html)
 
 	htmlStr := string(html)
 
@@ -249,7 +321,6 @@ func TestUIProjectPage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get project page: %v", err)
 	}
-	env.SaveScreenshot("02-project-after-index", html)
 
 	htmlStr = string(html)
 
@@ -260,6 +331,14 @@ func TestUIProjectPage(t *testing.T) {
 	if !strings.Contains(htmlStr, "files") {
 		t.Error("Expected files count after indexing")
 	}
+
+	// After screenshot - project page after indexing
+	if err := browser.NavigateAndScreenshot("/web/project/"+projectID, "02-after"); err != nil {
+		t.Fatalf("Failed to capture after screenshot: %v", err)
+	}
+
+	// Verify required screenshots exist
+	env.RequireScreenshots([]string{"01-before", "02-after"})
 
 	duration := time.Since(startTime)
 	env.WriteSummary(true, duration, "Project page UI working correctly")
@@ -276,6 +355,18 @@ func TestUIDocsPage(t *testing.T) {
 		t.Fatalf("Failed to start service: %v", err)
 	}
 
+	// Create browser for screenshots
+	browser, err := env.NewBrowser()
+	if err != nil {
+		t.Fatalf("Failed to create browser: %v", err)
+	}
+	defer browser.Close()
+
+	// Before screenshot - docs page initial load
+	if err := browser.NavigateAndScreenshot("/web/docs", "01-before"); err != nil {
+		t.Fatalf("Failed to capture before screenshot: %v", err)
+	}
+
 	client := env.NewHTTPClient()
 
 	// Fetch docs page
@@ -283,7 +374,6 @@ func TestUIDocsPage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get docs page: %v", err)
 	}
-	env.SaveScreenshot("01-docs-page", html)
 
 	htmlStr := string(html)
 
@@ -314,6 +404,14 @@ func TestUIDocsPage(t *testing.T) {
 		}
 	}
 
+	// After screenshot - full docs page
+	if err := browser.FullPageScreenshot("02-after"); err != nil {
+		t.Fatalf("Failed to capture after screenshot: %v", err)
+	}
+
+	// Verify required screenshots exist
+	env.RequireScreenshots([]string{"01-before", "02-after"})
+
 	duration := time.Since(startTime)
 	env.WriteSummary(true, duration, "Docs page loaded with all endpoints documented")
 }
@@ -329,6 +427,18 @@ func TestUISettingsPage(t *testing.T) {
 		t.Fatalf("Failed to start service: %v", err)
 	}
 
+	// Create browser for screenshots
+	browser, err := env.NewBrowser()
+	if err != nil {
+		t.Fatalf("Failed to create browser: %v", err)
+	}
+	defer browser.Close()
+
+	// Before screenshot - settings page initial load
+	if err := browser.NavigateAndScreenshot("/web/settings", "01-before"); err != nil {
+		t.Fatalf("Failed to capture before screenshot: %v", err)
+	}
+
 	client := env.NewHTTPClient()
 
 	// Fetch settings page
@@ -336,7 +446,6 @@ func TestUISettingsPage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get settings page: %v", err)
 	}
-	env.SaveScreenshot("01-settings-page", html)
 
 	htmlStr := string(html)
 
@@ -349,6 +458,14 @@ func TestUISettingsPage(t *testing.T) {
 	if !strings.Contains(htmlStr, "Projects") {
 		t.Error("Expected Projects link in navigation")
 	}
+
+	// After screenshot - settings page fully loaded
+	if err := browser.FullPageScreenshot("02-after"); err != nil {
+		t.Fatalf("Failed to capture after screenshot: %v", err)
+	}
+
+	// Verify required screenshots exist
+	env.RequireScreenshots([]string{"01-before", "02-after"})
 
 	duration := time.Since(startTime)
 	env.WriteSummary(true, duration, "Settings page loaded correctly")
@@ -365,7 +482,19 @@ func TestUINavigation(t *testing.T) {
 		t.Fatalf("Failed to start service: %v", err)
 	}
 
+	// Create browser for screenshots
+	browser, err := env.NewBrowser()
+	if err != nil {
+		t.Fatalf("Failed to create browser: %v", err)
+	}
+	defer browser.Close()
+
 	client := env.NewHTTPClient()
+
+	// Before screenshot - home page
+	if err := browser.NavigateAndScreenshot("/web/", "01-before"); err != nil {
+		t.Fatalf("Failed to capture before screenshot: %v", err)
+	}
 
 	// Test all main pages load
 	pages := map[string]string{
@@ -385,14 +514,24 @@ func TestUINavigation(t *testing.T) {
 		if !strings.Contains(string(body), expectedContent) {
 			t.Errorf("Page %s missing expected content: %s", path, expectedContent)
 		}
-
-		// Save screenshot
-		pageName := strings.ReplaceAll(strings.TrimPrefix(path, "/web"), "/", "-")
-		if pageName == "" || pageName == "-" {
-			pageName = "home"
-		}
-		env.SaveScreenshot(pageName, body)
 	}
+
+	// Navigate to each page and capture intermediate screenshots
+	if err := browser.NavigateAndScreenshot("/web/settings", "02-settings"); err != nil {
+		t.Fatalf("Failed to capture settings screenshot: %v", err)
+	}
+
+	if err := browser.NavigateAndScreenshot("/web/docs", "03-docs"); err != nil {
+		t.Fatalf("Failed to capture docs screenshot: %v", err)
+	}
+
+	// After screenshot - back to home
+	if err := browser.NavigateAndScreenshot("/web/", "04-after"); err != nil {
+		t.Fatalf("Failed to capture after screenshot: %v", err)
+	}
+
+	// Verify required screenshots exist
+	env.RequireScreenshots([]string{"01-before", "02-settings", "03-docs", "04-after"})
 
 	duration := time.Since(startTime)
 	env.WriteSummary(true, duration, "All pages navigable and loaded correctly")
@@ -408,6 +547,13 @@ func TestUISearchResults(t *testing.T) {
 	if err := env.Start(); err != nil {
 		t.Fatalf("Failed to start service: %v", err)
 	}
+
+	// Create browser for screenshots
+	browser, err := env.NewBrowser()
+	if err != nil {
+		t.Fatalf("Failed to create browser: %v", err)
+	}
+	defer browser.Close()
 
 	client := env.NewHTTPClient()
 
@@ -433,6 +579,11 @@ func TestUISearchResults(t *testing.T) {
 		t.Fatalf("Index project failed: %v", err)
 	}
 
+	// Before screenshot - project page before search
+	if err := browser.NavigateAndScreenshot("/web/project/"+projectID, "01-before"); err != nil {
+		t.Fatalf("Failed to capture before screenshot: %v", err)
+	}
+
 	// Perform search via API (simulating form submission)
 	resp, body, err = client.Post("/projects/"+projectID+"/search", map[string]interface{}{
 		"query": "HelloWorld",
@@ -444,12 +595,13 @@ func TestUISearchResults(t *testing.T) {
 	common.AssertStatusCode(t, resp, http.StatusOK)
 	env.SaveJSON("search-results.json", common.AssertJSON(t, body))
 
-	// Fetch project page with search results embedded
-	html, err := client.GetHTML("/web/project/" + projectID)
-	if err != nil {
-		t.Fatalf("Failed to get project page: %v", err)
+	// After screenshot - show project page (search results would be shown via HTMX in browser)
+	if err := browser.FullPageScreenshot("02-after"); err != nil {
+		t.Fatalf("Failed to capture after screenshot: %v", err)
 	}
-	env.SaveScreenshot("01-project-with-search", html)
+
+	// Verify required screenshots exist
+	env.RequireScreenshots([]string{"01-before", "02-after"})
 
 	duration := time.Since(startTime)
 	env.WriteSummary(true, duration, "Search results displayed correctly")

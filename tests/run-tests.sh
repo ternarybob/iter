@@ -159,15 +159,21 @@ while IFS= read -r line; do
             SHORT_NAME=$(echo "$TEST_NAME" | sed 's/^Test//' | tr '[:upper:]' '[:lower:]')
         fi
 
-        # Create test-specific results directory
-        TEST_DIR="$RESULTS_DIR/$TEST_TYPE/$TIMESTAMP-$SHORT_NAME"
-        mkdir -p "$TEST_DIR"
+        # Find existing test directory (created by test via mounted volume) or create new one
+        EXISTING_DIR=$(find "$RESULTS_DIR/$TEST_TYPE" -maxdepth 1 -type d -name "*-$SHORT_NAME" 2>/dev/null | sort -r | head -1)
+        if [ -n "$EXISTING_DIR" ]; then
+            TEST_DIR="$EXISTING_DIR"
+        else
+            TEST_DIR="$RESULTS_DIR/$TEST_TYPE/$TIMESTAMP-$SHORT_NAME"
+            mkdir -p "$TEST_DIR"
+        fi
 
         # Extract test-specific output
         awk "/^=== RUN   $TEST_NAME\$/,/^--- (PASS|FAIL): $TEST_NAME/" "$RAW_OUTPUT_DIR/test-output.log" > "$TEST_DIR/test-output.log" 2>/dev/null || true
 
-        # Create test summary
-        cat > "$TEST_DIR/summary.json" <<EOF
+        # Create test summary (only if not already created by test)
+        if [ ! -f "$TEST_DIR/summary.json" ]; then
+            cat > "$TEST_DIR/summary.json" <<EOF
 {
     "test_name": "$TEST_NAME",
     "status": "$STATUS",
@@ -176,15 +182,39 @@ while IFS= read -r line; do
     "docker": true
 }
 EOF
+        fi
 
         # Create markdown summary
+        SCREENSHOT_INFO=""
+        if [ "$TEST_TYPE" = "ui" ]; then
+            # Check for screenshots
+            SCREENSHOTS=$(ls "$TEST_DIR"/*.png 2>/dev/null | xargs -r -n1 basename | tr '\n' ', ' | sed 's/,$//')
+            if [ -n "$SCREENSHOTS" ]; then
+                SCREENSHOT_INFO="
+## Screenshots
+
+$SCREENSHOTS
+"
+            else
+                SCREENSHOT_INFO="
+## Screenshots
+
+**WARNING: No PNG screenshots found!**
+"
+                # UI tests without screenshots should be marked as failed
+                if [ "$STATUS" = "PASS" ]; then
+                    STATUS="FAIL (missing screenshots)"
+                fi
+            fi
+        fi
+
         cat > "$TEST_DIR/SUMMARY.md" <<EOF
 # $TEST_NAME
 
 **Status:** $STATUS
 **Type:** $TEST_TYPE
 **Timestamp:** $TIMESTAMP
-
+$SCREENSHOT_INFO
 ## Output
 
 \`\`\`
@@ -192,9 +222,37 @@ $(cat "$TEST_DIR/test-output.log" 2>/dev/null || echo "No output captured")
 \`\`\`
 EOF
 
-        echo "  Created: $TEST_TYPE/$TIMESTAMP-$SHORT_NAME/ ($STATUS)"
+        echo "  Created: $TEST_TYPE/$(basename $TEST_DIR)/ ($STATUS)"
     fi
 done < "$RAW_OUTPUT_DIR/test-output.log"
+
+# Verify UI test screenshots
+echo ""
+echo "Verifying UI test screenshots..."
+UI_SCREENSHOT_ERRORS=0
+for ui_dir in "$RESULTS_DIR/ui"/*; do
+    if [ -d "$ui_dir" ]; then
+        DIR_NAME=$(basename "$ui_dir")
+        BEFORE_COUNT=$(ls "$ui_dir"/*-before.png 2>/dev/null | wc -l)
+        AFTER_COUNT=$(ls "$ui_dir"/*-after.png "$ui_dir"/02-*.png 2>/dev/null | wc -l)
+        TOTAL_PNG=$(ls "$ui_dir"/*.png 2>/dev/null | wc -l)
+
+        if [ "$TOTAL_PNG" -eq 0 ]; then
+            echo "  FAIL: $DIR_NAME - No PNG screenshots"
+            UI_SCREENSHOT_ERRORS=$((UI_SCREENSHOT_ERRORS + 1))
+        elif [ "$BEFORE_COUNT" -eq 0 ]; then
+            echo "  FAIL: $DIR_NAME - Missing before screenshot"
+            UI_SCREENSHOT_ERRORS=$((UI_SCREENSHOT_ERRORS + 1))
+        else
+            echo "  OK: $DIR_NAME - $TOTAL_PNG screenshots"
+        fi
+    fi
+done
+
+if [ "$UI_SCREENSHOT_ERRORS" -gt 0 ]; then
+    echo ""
+    echo "WARNING: $UI_SCREENSHOT_ERRORS UI tests missing required screenshots!"
+fi
 
 # Parse overall results
 TOTAL_TESTS=$(grep -c "^--- " "$RAW_OUTPUT_DIR/test-output.log" 2>/dev/null) || TOTAL_TESTS=0

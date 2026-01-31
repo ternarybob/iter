@@ -2,14 +2,20 @@
 # Provides an isolated Linux environment for running tests
 # Always built fresh to ensure clean state
 
-FROM golang:1.23-bookworm
+FROM golang:1.24-bookworm
 
-# Install system dependencies
+# Install system dependencies including Chromium for UI tests
 RUN apt-get update && apt-get install -y \
     git \
     curl \
     jq \
+    chromium \
+    chromium-driver \
     && rm -rf /var/lib/apt/lists/*
+
+# Set Chrome path for chromedp
+ENV CHROME_BIN=/usr/bin/chromium
+ENV CHROMEDP_NO_SANDBOX=true
 
 # Set working directory
 WORKDIR /app
