@@ -48,3 +48,4 @@ tests/bin/
 
 # Local config (use config.example.toml as reference)
 configs/config.toml
+tests/config/config.toml
