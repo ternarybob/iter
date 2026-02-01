@@ -32,9 +32,10 @@ type ProjectIndexStatus struct {
 
 // TestIndexStatusAPIWithoutProjects tests the index status API when no projects are registered.
 func TestIndexStatusAPIWithoutProjects(t *testing.T) {
-	env := getEnv(t)
-	startTime := time.Now()
+	env := common.SetupTest(t, "api")
+	defer env.Cleanup()
 
+	startTime := time.Now()
 	client := env.NewHTTPClient()
 
 	// Get index status with no projects
@@ -54,23 +55,25 @@ func TestIndexStatusAPIWithoutProjects(t *testing.T) {
 	// Save response
 	env.SaveJSON("index-status-response.json", status)
 
-	// Verify GOOGLE_GEMINI_API_KEY status (should NOT be configured in test environment)
-	if status.GeminiAPIKeyConfigured {
-		t.Error("GOOGLE_GEMINI_API_KEY should not be configured in test environment")
+	// Verify GOOGLE_GEMINI_API_KEY is configured (from tests/config/config.toml)
+	if !status.GeminiAPIKeyConfigured {
+		t.Error("GOOGLE_GEMINI_API_KEY should be configured from tests/config/config.toml")
 	}
 
-	if !strings.Contains(status.GeminiAPIKeyStatus, "not provided") {
-		t.Errorf("Expected 'not provided' in status, got: %s", status.GeminiAPIKeyStatus)
+	if status.GeminiAPIKeyStatus != "Configured" {
+		t.Errorf("Expected 'Configured' status, got: %s", status.GeminiAPIKeyStatus)
 	}
 
 	duration := time.Since(startTime)
-	env.WriteSummary(true, duration, "Index status API returns correct response. GOOGLE_GEMINI_API_KEY not provided.")
+	env.WriteSummary(true, duration, "Index status API returns correct response. Gemini API key configured.")
 	t.Logf("Index status: API Key=%s", status.GeminiAPIKeyStatus)
 }
 
 // TestIndexStatusAPIWithProjects tests the index status API when projects are registered.
 func TestIndexStatusAPIWithProjects(t *testing.T) {
-	env := getEnv(t)
+	env := common.SetupTest(t, "api")
+	defer env.Cleanup()
+
 	startTime := time.Now()
 
 	// Create test projects
@@ -137,12 +140,12 @@ func TestIndexStatusAPIWithProjects(t *testing.T) {
 	// Save response
 	env.SaveJSON("index-status-response.json", status)
 
-	// Verify GOOGLE_GEMINI_API_KEY status
-	if status.GeminiAPIKeyConfigured {
-		t.Error("GOOGLE_GEMINI_API_KEY should not be configured")
+	// Verify GOOGLE_GEMINI_API_KEY is configured (from tests/config/config.toml)
+	if !status.GeminiAPIKeyConfigured {
+		t.Error("GOOGLE_GEMINI_API_KEY should be configured from tests/config/config.toml")
 	}
-	if !strings.Contains(status.GeminiAPIKeyStatus, "not provided") {
-		t.Errorf("Status should indicate API key not provided, got: %s", status.GeminiAPIKeyStatus)
+	if status.GeminiAPIKeyStatus != "Configured" {
+		t.Errorf("Expected 'Configured' status, got: %s", status.GeminiAPIKeyStatus)
 	}
 
 	// Verify projects are listed (at least our 2)
@@ -156,18 +159,20 @@ func TestIndexStatusAPIWithProjects(t *testing.T) {
 
 	duration := time.Since(startTime)
 	details := "Index status API returns correct response with projects. " +
-		"Projects show api_key_missing status because GOOGLE_GEMINI_API_KEY is not provided."
+		"Gemini API key configured for semantic indexing."
 	env.WriteSummary(true, duration, details)
 	t.Logf("Index status (with projects): API Key=%s, Projects=%d", status.GeminiAPIKeyStatus, len(status.Projects))
 }
 
-// TestIndexStatusRequiresGeminiAPIKey verifies that semantic indexing requires GOOGLE_GEMINI_API_KEY.
-func TestIndexStatusRequiresGeminiAPIKey(t *testing.T) {
-	env := getEnv(t)
+// TestIndexStatusSemanticIndexingEnabled verifies semantic indexing works with Gemini API key.
+func TestIndexStatusSemanticIndexingEnabled(t *testing.T) {
+	env := common.SetupTest(t, "api")
+	defer env.Cleanup()
+
 	startTime := time.Now()
 
 	// Create and register a project
-	projectPath, err := env.CreateTestProject("gemini-test-project")
+	projectPath, err := env.CreateTestProject("semantic-test-project")
 	if err != nil {
 		env.WriteSummary(false, time.Since(startTime), "Failed to create test project")
 		t.Fatalf("Failed to create test project: %v", err)
@@ -204,17 +209,150 @@ func TestIndexStatusRequiresGeminiAPIKey(t *testing.T) {
 	// Save response
 	env.SaveJSON("index-status-response.json", status)
 
-	// The test MUST show semantic indexing is unavailable without API key
-	if status.GeminiAPIKeyConfigured {
-		t.Fatal("Test environment should NOT have GOOGLE_GEMINI_API_KEY configured")
+	// Verify Gemini API key is configured (from tests/config/config.toml)
+	if !status.GeminiAPIKeyConfigured {
+		t.Error("GOOGLE_GEMINI_API_KEY should be configured from tests/config/config.toml")
+	}
+
+	if status.GeminiAPIKeyStatus != "Configured" {
+		t.Errorf("Expected 'Configured' status, got: %s", status.GeminiAPIKeyStatus)
 	}
 
 	// Cleanup
 	client.Delete("/projects/" + proj.ID)
 
 	duration := time.Since(startTime)
-	details := "EXPECTED: Semantic indexing is unavailable without GOOGLE_GEMINI_API_KEY. " +
+	details := "Semantic indexing is available with Gemini API key configured. " +
 		"Status: " + status.GeminiAPIKeyStatus
 	env.WriteSummary(true, duration, details)
-	t.Log("EXPECTED: Semantic indexing is unavailable without GOOGLE_GEMINI_API_KEY")
+	t.Log("Semantic indexing enabled with Gemini API key")
+}
+
+// TestGracefulDegradationWithoutAPIKey verifies the service handles missing API key gracefully.
+// The service should:
+// 1. Start successfully without crashing
+// 2. Report that API key is not configured
+// 3. Allow basic operations (project registration, structural indexing)
+// 4. Gracefully indicate semantic indexing is unavailable
+func TestGracefulDegradationWithoutAPIKey(t *testing.T) {
+	// Use WithoutLLMConfig to skip loading the API key
+	env := common.SetupTest(t, "api", common.WithoutLLMConfig())
+	defer env.Cleanup()
+
+	startTime := time.Now()
+	client := env.NewHTTPClient()
+
+	// Test 1: Service is running and responding
+	resp, _, err := client.Get("/health")
+	if err != nil {
+		env.WriteSummary(false, time.Since(startTime), "Service not responding: "+err.Error())
+		t.Fatalf("Service health check failed: %v", err)
+	}
+	common.AssertStatusCode(t, resp, http.StatusOK)
+
+	// Test 2: Index status shows API key not configured
+	resp, body, err := client.Get("/api/index-status")
+	if err != nil {
+		env.WriteSummary(false, time.Since(startTime), "Failed to get index status: "+err.Error())
+		t.Fatalf("Failed to get index status: %v", err)
+	}
+	common.AssertStatusCode(t, resp, http.StatusOK)
+
+	var status IndexStatusResponse
+	if err := json.Unmarshal(body, &status); err != nil {
+		env.WriteSummary(false, time.Since(startTime), "Failed to parse response: "+err.Error())
+		t.Fatalf("Failed to parse index status response: %v", err)
+	}
+
+	// Save response
+	env.SaveJSON("index-status-no-apikey.json", status)
+
+	// Verify API key is NOT configured (this is the graceful degradation test)
+	if status.GeminiAPIKeyConfigured {
+		t.Error("GOOGLE_GEMINI_API_KEY should NOT be configured in this test")
+	}
+
+	if !strings.Contains(status.GeminiAPIKeyStatus, "not provided") {
+		t.Errorf("Expected 'not provided' in status, got: %s", status.GeminiAPIKeyStatus)
+	}
+
+	// Test 3: Can still register and index a project (structural indexing works)
+	projectPath, err := env.CreateTestProject("graceful-test-project")
+	if err != nil {
+		env.WriteSummary(false, time.Since(startTime), "Failed to create test project")
+		t.Fatalf("Failed to create test project: %v", err)
+	}
+
+	resp, body, err = client.Post("/projects", map[string]string{"path": projectPath})
+	if err != nil {
+		env.WriteSummary(false, time.Since(startTime), "Failed to register project")
+		t.Fatalf("Failed to register project: %v", err)
+	}
+	common.AssertStatusCode(t, resp, http.StatusCreated)
+
+	var proj struct {
+		ID string `json:"id"`
+	}
+	json.Unmarshal(body, &proj)
+
+	// Test 4: Index project - should work for structural indexing
+	resp, body, err = client.Post("/projects/"+proj.ID+"/index", nil)
+	if err != nil {
+		env.WriteSummary(false, time.Since(startTime), "Failed to index project")
+		t.Fatalf("Failed to index project: %v", err)
+	}
+	common.AssertStatusCode(t, resp, http.StatusOK)
+
+	// Verify indexing response
+	var indexResult map[string]interface{}
+	json.Unmarshal(body, &indexResult)
+	env.SaveJSON("index-result.json", indexResult)
+
+	// Should have document and file counts (structural indexing works)
+	if docCount, ok := indexResult["document_count"].(float64); !ok || docCount == 0 {
+		t.Error("Expected documents to be indexed (structural indexing)")
+	}
+
+	// Test 5: Check project status shows api_key_missing
+	time.Sleep(500 * time.Millisecond)
+	resp, body, err = client.Get("/api/index-status")
+	if err != nil {
+		t.Fatalf("Failed to get index status: %v", err)
+	}
+
+	json.Unmarshal(body, &status)
+
+	// Find our project and verify its status
+	var foundProject *ProjectIndexStatus
+	for i := range status.Projects {
+		if status.Projects[i].ID == proj.ID {
+			foundProject = &status.Projects[i]
+			break
+		}
+	}
+
+	if foundProject == nil {
+		t.Error("Project not found in status")
+	} else {
+		if foundProject.IndexStatus != "api_key_missing" {
+			t.Errorf("Expected index_status 'api_key_missing', got: %s", foundProject.IndexStatus)
+		}
+		if !strings.Contains(foundProject.ErrorMessage, "semantic indexing unavailable") {
+			t.Errorf("Expected error message about semantic indexing, got: %s", foundProject.ErrorMessage)
+		}
+		// Structural indexing should still work
+		if foundProject.DocumentCount == 0 {
+			t.Error("Expected documents from structural indexing")
+		}
+	}
+
+	// Cleanup
+	client.Delete("/projects/" + proj.ID)
+
+	duration := time.Since(startTime)
+	details := "Service handles missing Gemini API key gracefully. " +
+		"Structural indexing works, semantic indexing gracefully unavailable. " +
+		"Status: " + status.GeminiAPIKeyStatus
+	env.WriteSummary(true, duration, details)
+	t.Log("Graceful degradation verified: service runs without API key, structural indexing works")
 }

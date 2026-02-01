@@ -65,7 +65,9 @@ func sendMCPRequest(baseURL string, req *MCPRequest) (*MCPResponse, error) {
 
 // TestMCPProtocolInitialize tests the MCP initialize handshake.
 func TestMCPProtocolInitialize(t *testing.T) {
-	env := getEnv(t)
+	env := common.SetupTest(t, "api")
+	defer env.Cleanup()
+
 	startTime := time.Now()
 
 	// Test initialize
@@ -111,7 +113,9 @@ func TestMCPProtocolInitialize(t *testing.T) {
 
 // TestMCPProtocolToolsList tests listing available MCP tools.
 func TestMCPProtocolToolsList(t *testing.T) {
-	env := getEnv(t)
+	env := common.SetupTest(t, "api")
+	defer env.Cleanup()
+
 	startTime := time.Now()
 
 	// First initialize
@@ -172,9 +176,10 @@ func TestMCPProtocolToolsList(t *testing.T) {
 
 // TestMCPProtocolToolsCall tests calling MCP tools.
 func TestMCPProtocolToolsCall(t *testing.T) {
-	env := getEnv(t)
-	startTime := time.Now()
+	env := common.SetupTest(t, "api")
+	defer env.Cleanup()
 
+	startTime := time.Now()
 	client := env.NewHTTPClient()
 
 	// Create and register a test project
@@ -281,7 +286,9 @@ func TestMCPProtocolToolsCall(t *testing.T) {
 
 // TestMCPSSEEndpoint tests the SSE endpoint for MCP.
 func TestMCPSSEEndpoint(t *testing.T) {
-	env := getEnv(t)
+	env := common.SetupTest(t, "api")
+	defer env.Cleanup()
+
 	startTime := time.Now()
 
 	// Make GET request to SSE endpoint

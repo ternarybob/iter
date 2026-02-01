@@ -30,11 +30,12 @@ const (
 // TestSetup manages the test environment lifecycle for a test file.
 // Use in TestMain to build, start, run tests, and cleanup.
 type TestSetup struct {
-	Mode        TestMode
-	BinaryPath  string
-	ServiceEnv  *TestEnv
-	projectRoot string
-	mu          sync.Mutex
+	Mode          TestMode
+	BinaryPath    string
+	ServiceEnv    *TestEnv
+	projectRoot   string
+	skipLLMConfig bool // If true, don't load LLM config from tests/config/config.toml
+	mu            sync.Mutex
 
 	// Docker-specific
 	ctx             context.Context
@@ -46,10 +47,22 @@ type TestSetup struct {
 
 // NewTestSetup creates a new test setup for local service testing.
 // Call this in TestMain before m.Run().
+// This loads the LLM config from tests/config/config.toml by default.
 func NewTestSetup() *TestSetup {
 	return &TestSetup{
-		Mode:        ModeLocal,
-		projectRoot: getProjectRoot(),
+		Mode:          ModeLocal,
+		projectRoot:   getProjectRoot(),
+		skipLLMConfig: false,
+	}
+}
+
+// NewTestSetupWithoutLLMConfig creates a test setup that does NOT load the LLM config.
+// Use this for testing graceful degradation when Gemini API key is not available.
+func NewTestSetupWithoutLLMConfig() *TestSetup {
+	return &TestSetup{
+		Mode:          ModeLocal,
+		projectRoot:   getProjectRoot(),
+		skipLLMConfig: true,
 	}
 }
 
@@ -57,8 +70,9 @@ func NewTestSetup() *TestSetup {
 // This builds the binary, creates Docker containers, and runs tests.
 func NewDockerTestSetup() *TestSetup {
 	return &TestSetup{
-		Mode:        ModeDocker,
-		projectRoot: getProjectRoot(),
+		Mode:          ModeDocker,
+		projectRoot:   getProjectRoot(),
+		skipLLMConfig: false,
 	}
 }
 
@@ -347,14 +361,15 @@ func (s *TestSetup) createEnv(testType, testName string) *TestEnv {
 	port := allocatePort()
 
 	env := &TestEnv{
-		Name:       testName,
-		Type:       testType,
-		DataDir:    dataDir,
-		ConfigPath: filepath.Join(dataDir, "config.toml"),
-		ResultsDir: resultsDir,
-		Port:       port,
-		BaseURL:    fmt.Sprintf("http://127.0.0.1:%d", port),
-		external:   false,
+		Name:          testName,
+		Type:          testType,
+		DataDir:       dataDir,
+		ConfigPath:    filepath.Join(dataDir, "config.toml"),
+		ResultsDir:    resultsDir,
+		Port:          port,
+		BaseURL:       fmt.Sprintf("http://127.0.0.1:%d", port),
+		external:      false,
+		skipLLMConfig: s.skipLLMConfig,
 	}
 
 	// Write config
@@ -365,6 +380,12 @@ func (s *TestSetup) createEnv(testType, testName string) *TestEnv {
 
 // writeConfigForSetup writes config without requiring *testing.T.
 func (e *TestEnv) writeConfigForSetup() error {
+	// Read LLM config from tests/config/config.toml if it exists (unless skipped)
+	llmSection := ""
+	if !e.skipLLMConfig {
+		llmSection = readTestLLMConfig()
+	}
+
 	config := fmt.Sprintf(`[service]
 host = "127.0.0.1"
 port = %d
@@ -387,7 +408,7 @@ output = ["stdout"]
 [index]
 debounce_ms = 100
 watch_enabled = true
-`, e.Port, e.DataDir, e.DataDir)
+%s`, e.Port, e.DataDir, e.DataDir, llmSection)
 
 	return os.WriteFile(e.ConfigPath, []byte(config), 0644)
 }
@@ -443,4 +464,126 @@ func (s *TestSetup) WaitForHealthy(timeout time.Duration) error {
 		return s.ServiceEnv.waitForReady(timeout)
 	}
 	return fmt.Errorf("service not started")
+}
+
+// TestOption is a functional option for configuring test setup.
+type TestOption func(*testOptions)
+
+type testOptions struct {
+	skipLLMConfig bool
+}
+
+// WithoutLLMConfig creates a test without loading the LLM config.
+// Use this to test graceful degradation when Gemini API key is not available.
+func WithoutLLMConfig() TestOption {
+	return func(o *testOptions) {
+		o.skipLLMConfig = true
+	}
+}
+
+// binaryBuildOnce ensures binary is built only once across all tests.
+var (
+	binaryBuildOnce sync.Once
+	binaryBuildErr  error
+	builtBinaryPath string
+)
+
+// SetupTest creates a clean test environment for a single test.
+// Each test gets its own service instance with isolated data.
+// Call env.Cleanup() in defer to stop the service.
+//
+// Example:
+//
+//	func TestSomething(t *testing.T) {
+//	    env := common.SetupTest(t, "api", t.Name())
+//	    defer env.Cleanup()
+//	    // ... test code ...
+//	}
+func SetupTest(t *testing.T, testType string, opts ...TestOption) *TestEnv {
+	t.Helper()
+
+	// Apply options
+	options := &testOptions{}
+	for _, opt := range opts {
+		opt(options)
+	}
+
+	// Build binary once
+	binaryBuildOnce.Do(func() {
+		root := getProjectRoot()
+		binDir := filepath.Join(root, "tests", "bin")
+		if err := os.MkdirAll(binDir, 0755); err != nil {
+			binaryBuildErr = fmt.Errorf("create bin dir: %w", err)
+			return
+		}
+
+		builtBinaryPath = filepath.Join(binDir, "iter-service")
+
+		// Get version
+		version := "dev"
+		if data, err := os.ReadFile(filepath.Join(root, ".version")); err == nil {
+			version = string(data)
+		}
+
+		fmt.Printf("Building iter-service (version: %s)...\n", version)
+
+		cmd := exec.Command("go", "build",
+			"-ldflags", fmt.Sprintf("-X main.version=%s", version),
+			"-o", builtBinaryPath,
+			"./cmd/iter-service",
+		)
+		cmd.Dir = root
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+
+		if err := cmd.Run(); err != nil {
+			binaryBuildErr = fmt.Errorf("build failed: %w", err)
+			return
+		}
+
+		fmt.Printf("Built: %s\n", builtBinaryPath)
+	})
+
+	if binaryBuildErr != nil {
+		t.Fatalf("Failed to build binary: %v", binaryBuildErr)
+	}
+
+	// Create environment for this test
+	testName := t.Name()
+	root := getProjectRoot()
+	resultsDir := filepath.Join(root, "tests", "results", testType, testName)
+
+	// Clean previous results
+	os.RemoveAll(resultsDir)
+	os.MkdirAll(resultsDir, 0755)
+
+	dataDir := filepath.Join(resultsDir, "data")
+	os.MkdirAll(dataDir, 0755)
+
+	port := allocatePort()
+
+	env := &TestEnv{
+		T:             t,
+		Name:          testName,
+		Type:          testType,
+		DataDir:       dataDir,
+		ConfigPath:    filepath.Join(dataDir, "config.toml"),
+		ResultsDir:    resultsDir,
+		Port:          port,
+		BaseURL:       fmt.Sprintf("http://127.0.0.1:%d", port),
+		external:      false,
+		skipLLMConfig: options.skipLLMConfig,
+	}
+
+	// Write config
+	if err := env.writeConfigForSetup(); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+
+	// Start service
+	if err := env.Start(); err != nil {
+		t.Fatalf("Failed to start service: %v", err)
+	}
+
+	return env
 }

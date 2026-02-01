@@ -1,45 +1,22 @@
 // Package api contains integration tests for iter-service REST API.
-// Each test file builds the binary, starts the service, runs all tests, then cleans up.
+// Each test creates its own clean environment with an isolated service instance.
 package api
 
 import (
 	"fmt"
 	"net/http"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/ternarybob/iter/tests/common"
 )
 
-// Shared test setup for all tests in this file
-var testSetup *common.TestSetup
-
-// TestMain runs once per test file: build, start service, run tests, cleanup.
-func TestMain(m *testing.M) {
-	testSetup = common.NewTestSetup()
-	code := testSetup.Run(m, "api", "api_test")
-	os.Exit(code)
-}
-
-// getEnv returns the shared test environment.
-// Individual tests use this instead of creating their own.
-func getEnv(t *testing.T) *common.TestEnv {
-	t.Helper()
-	env := testSetup.Env()
-	if env == nil {
-		t.Fatal("Test environment not initialized")
-	}
-	// Set the testing.T for this specific test
-	env.T = t
-	return env
-}
-
 // TestAPIProjectCRUD tests project create, read, update, delete operations.
 func TestAPIProjectCRUD(t *testing.T) {
-	env := getEnv(t)
-	startTime := time.Now()
+	env := common.SetupTest(t, "api")
+	defer env.Cleanup()
 
+	startTime := time.Now()
 	client := env.NewHTTPClient()
 
 	// Create a test project directory
@@ -125,9 +102,10 @@ func TestAPIProjectCRUD(t *testing.T) {
 
 // TestAPIProjectIndex tests project indexing operations.
 func TestAPIProjectIndex(t *testing.T) {
-	env := getEnv(t)
-	startTime := time.Now()
+	env := common.SetupTest(t, "api")
+	defer env.Cleanup()
 
+	startTime := time.Now()
 	client := env.NewHTTPClient()
 
 	// Create and register a test project
@@ -178,9 +156,10 @@ func TestAPIProjectIndex(t *testing.T) {
 
 // TestAPISearch tests the search functionality.
 func TestAPISearch(t *testing.T) {
-	env := getEnv(t)
-	startTime := time.Now()
+	env := common.SetupTest(t, "api")
+	defer env.Cleanup()
 
+	startTime := time.Now()
 	client := env.NewHTTPClient()
 
 	// Create and register a test project
@@ -261,9 +240,10 @@ func TestAPISearch(t *testing.T) {
 
 // TestAPIErrorHandling tests API error responses.
 func TestAPIErrorHandling(t *testing.T) {
-	env := getEnv(t)
-	startTime := time.Now()
+	env := common.SetupTest(t, "api")
+	defer env.Cleanup()
 
+	startTime := time.Now()
 	client := env.NewHTTPClient()
 
 	// 1. Get non-existent project
@@ -338,9 +318,10 @@ func TestAPIErrorHandling(t *testing.T) {
 
 // TestAPIMultipleProjects tests managing multiple projects.
 func TestAPIMultipleProjects(t *testing.T) {
-	env := getEnv(t)
-	startTime := time.Now()
+	env := common.SetupTest(t, "api")
+	defer env.Cleanup()
 
+	startTime := time.Now()
 	client := env.NewHTTPClient()
 
 	// Create multiple test projects

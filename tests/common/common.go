@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -20,19 +21,20 @@ import (
 
 // TestEnv represents an isolated test environment with its own iter-service instance.
 type TestEnv struct {
-	T          *testing.T
-	Name       string
-	Type       string // "api", "service", or "ui"
-	DataDir    string
-	ConfigPath string
-	ResultsDir string
-	Port       int
-	BaseURL    string
-	Cmd        *exec.Cmd
-	LogFile    *os.File
-	mu         sync.Mutex
-	started    bool
-	external   bool // true if using external service via ITER_BASE_URL
+	T             *testing.T
+	Name          string
+	Type          string // "api", "service", or "ui"
+	DataDir       string
+	ConfigPath    string
+	ResultsDir    string
+	Port          int
+	BaseURL       string
+	Cmd           *exec.Cmd
+	LogFile       *os.File
+	mu            sync.Mutex
+	started       bool
+	external      bool // true if using external service via ITER_BASE_URL
+	skipLLMConfig bool // true to skip loading LLM config (for graceful degradation tests)
 }
 
 // portCounter is used to allocate unique ports for each test.
@@ -42,12 +44,34 @@ var (
 	projectRoot string
 )
 
-// allocatePort returns a unique port for the test.
+// allocatePort returns a unique available port for the test.
+// It checks if the port is actually free before returning it.
 func allocatePort() int {
 	portMu.Lock()
 	defer portMu.Unlock()
+
+	// Try up to 100 ports to find a free one
+	for i := 0; i < 100; i++ {
+		portCounter++
+		if isPortAvailable(portCounter) {
+			return portCounter
+		}
+	}
+
+	// Fallback: just return the next port
 	portCounter++
 	return portCounter
+}
+
+// isPortAvailable checks if a port is available for binding.
+func isPortAvailable(port int) bool {
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return false
+	}
+	ln.Close()
+	return true
 }
 
 // getProjectRoot finds the project root directory by looking for go.mod.
@@ -150,6 +174,12 @@ func NewTestEnv(t *testing.T, testType, testName string) *TestEnv {
 
 // writeConfig writes the test configuration file.
 func (e *TestEnv) writeConfig() error {
+	// Read LLM config from tests/config/config.toml if it exists (unless skipped)
+	llmSection := ""
+	if !e.skipLLMConfig {
+		llmSection = readTestLLMConfig()
+	}
+
 	config := fmt.Sprintf(`[service]
 host = "127.0.0.1"
 port = %d
@@ -172,9 +202,27 @@ output = "file"
 [index]
 debounce_ms = 100
 watch_enabled = true
-`, e.Port, e.DataDir, e.DataDir)
+%s`, e.Port, e.DataDir, e.DataDir, llmSection)
 
 	return os.WriteFile(e.ConfigPath, []byte(config), 0644)
+}
+
+// readTestLLMConfig reads the LLM configuration from tests/config/config.toml.
+func readTestLLMConfig() string {
+	root := getProjectRoot()
+	configPath := filepath.Join(root, "tests", "config", "config.toml")
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return "" // No test config, skip LLM section
+	}
+
+	// Return the entire content - it contains the [llm] section
+	content := string(data)
+	if strings.TrimSpace(content) != "" {
+		return "\n" + content
+	}
+	return ""
 }
 
 // Start starts the iter-service for this test environment.
