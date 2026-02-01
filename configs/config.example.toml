@@ -9,11 +9,20 @@
 # Path expansion: Use ~ for home directory
 #
 # Minimal config.toml example:
-#   [llm]
-#   api_key = "${GEMINI_API_KEY}"
+#   [gemini]
+#   api_key = "${GOOGLE_GEMINI_API_KEY}"
 #
 #   [logging]
 #   level = "debug"
+
+# =============================================================================
+# GEMINI - Google Gemini API settings (required for AI operations)
+# =============================================================================
+[gemini]
+api_key = "${GOOGLE_GEMINI_API_KEY}"  # Required for all AI operations
+model = "gemini-3-flash-preview"      # Model for AI operations
+thinking = "NORMAL"                   # Thinking level: NONE, LOW, NORMAL, HIGH
+timeout_seconds = 30                  # Request timeout
 
 # =============================================================================
 # SERVICE - Core service settings
@@ -52,17 +61,6 @@ allowed_origins = [
 [mcp]
 enabled = true                        # Enable MCP server
 auto_build_index = true               # Auto-build index on start
-
-# =============================================================================
-# LLM - Language model integration
-# =============================================================================
-[llm]
-provider = "gemini"                   # Provider: gemini, openai, anthropic
-api_key = "${GEMINI_API_KEY}"         # API key (use env var)
-model = "gemini-1.5-flash"            # Model name
-max_tokens = 1024                     # Max response tokens
-temperature = 0.3                     # Temperature (0.0-1.0)
-timeout_seconds = 30                  # Request timeout
 
 # =============================================================================
 # INDEX - Code indexing settings

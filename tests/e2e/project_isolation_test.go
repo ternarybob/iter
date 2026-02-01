@@ -692,8 +692,8 @@ func TestClaudeMCPQuery(t *testing.T) {
 }
 
 // TestClaudeMCPExactCodeRetrieval tests that Claude can retrieve exact code content via MCP.
-// This test requires GEMINI_API_KEY to be configured for semantic indexing.
-// Without GEMINI_API_KEY, the test SHOULD FAIL because semantic search won't return accurate results.
+// This test requires GOOGLE_GEMINI_API_KEY to be configured for semantic indexing.
+// Without GOOGLE_GEMINI_API_KEY, the test SHOULD FAIL because semantic search won't return accurate results.
 func TestClaudeMCPExactCodeRetrieval(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E tests in short mode")
@@ -748,7 +748,7 @@ func TestClaudeMCPExactCodeRetrieval(t *testing.T) {
 		// Expected content: "Hello from Alpha"
 		outputLower := strings.ToLower(output)
 
-		// These assertions will FAIL if GEMINI_API_KEY is not configured
+		// These assertions will FAIL if GOOGLE_GEMINI_API_KEY is not configured
 		// because semantic search won't return accurate code results
 		assert.True(t,
 			strings.Contains(output, "Hello from Alpha") ||
@@ -756,7 +756,7 @@ func TestClaudeMCPExactCodeRetrieval(t *testing.T) {
 				strings.Contains(output, "suffix") ||
 				strings.Contains(output, "Sprintf"),
 			"Claude response MUST contain exact code from AlphaGreeter.Greet method. "+
-				"If this fails, verify GEMINI_API_KEY is configured for semantic indexing.")
+				"If this fails, verify GOOGLE_GEMINI_API_KEY is configured for semantic indexing.")
 
 		// Verify it mentions the greeting concepts
 		assert.True(t,
@@ -785,14 +785,14 @@ func TestClaudeMCPExactCodeRetrieval(t *testing.T) {
 		// The Beta project uses math.Sqrt and stores in history
 		outputLower := strings.ToLower(output)
 
-		// These assertions will FAIL if GEMINI_API_KEY is not configured
+		// These assertions will FAIL if GOOGLE_GEMINI_API_KEY is not configured
 		assert.True(t,
 			strings.Contains(output, "math.Sqrt") ||
 				strings.Contains(output, "Sqrt") ||
 				strings.Contains(outputLower, "square root") ||
 				strings.Contains(output, "history"),
 			"Claude response MUST contain exact code from BetaCalculator.SquareRoot method. "+
-				"If this fails, verify GEMINI_API_KEY is configured for semantic indexing.")
+				"If this fails, verify GOOGLE_GEMINI_API_KEY is configured for semantic indexing.")
 
 		// Verify it mentions calculator concepts
 		assert.True(t,
@@ -823,7 +823,7 @@ func TestClaudeMCPExactCodeRetrieval(t *testing.T) {
 		// 3. Prints formatted (uppercase) version
 		outputLower := strings.ToLower(output)
 
-		// These assertions will FAIL if GEMINI_API_KEY is not configured
+		// These assertions will FAIL if GOOGLE_GEMINI_API_KEY is not configured
 		assert.True(t,
 			strings.Contains(output, "alpha-greeting-service") ||
 				strings.Contains(output, "8080") ||
@@ -831,7 +831,7 @@ func TestClaudeMCPExactCodeRetrieval(t *testing.T) {
 				strings.Contains(outputLower, "world") ||
 				strings.Contains(output, "Formatted"),
 			"Claude response MUST describe the actual program output. "+
-				"If this fails, verify GEMINI_API_KEY is configured for semantic indexing.")
+				"If this fails, verify GOOGLE_GEMINI_API_KEY is configured for semantic indexing.")
 
 		t.Logf("Main function output response: %s", output[:min(800, len(output))])
 	})
@@ -886,9 +886,9 @@ func TestIndexStatusWithoutGeminiAPIKey(t *testing.T) {
 	err = json.Unmarshal([]byte(cleanOutput), &status)
 	require.NoError(t, err, "Failed to parse index status response")
 
-	// Verify GEMINI_API_KEY is NOT configured in test environment
+	// Verify GOOGLE_GEMINI_API_KEY is NOT configured in test environment
 	assert.False(t, status.GeminiAPIKeyConfigured,
-		"GEMINI_API_KEY should NOT be configured in test environment")
+		"GOOGLE_GEMINI_API_KEY should NOT be configured in test environment")
 	assert.Contains(t, status.GeminiAPIKeyStatus, "not provided",
 		"Status should indicate API key is not provided")
 
@@ -896,10 +896,10 @@ func TestIndexStatusWithoutGeminiAPIKey(t *testing.T) {
 	require.Len(t, status.Projects, 1, "Should have 1 project")
 	assert.Equal(t, "api_key_missing", status.Projects[0].IndexStatus,
 		"Project index status should be 'api_key_missing'")
-	assert.Contains(t, status.Projects[0].ErrorMessage, "GEMINI_API_KEY",
-		"Error message should mention GEMINI_API_KEY")
+	assert.Contains(t, status.Projects[0].ErrorMessage, "GOOGLE_GEMINI_API_KEY",
+		"Error message should mention GOOGLE_GEMINI_API_KEY")
 
-	t.Log("EXPECTED: Index status shows GEMINI_API_KEY not provided")
+	t.Log("EXPECTED: Index status shows GOOGLE_GEMINI_API_KEY not provided")
 	t.Logf("API Key Status: %s", status.GeminiAPIKeyStatus)
 	t.Logf("Project Status: %s - %s", status.Projects[0].IndexStatus, status.Projects[0].ErrorMessage)
 }
@@ -938,7 +938,7 @@ func TestIndexStatusUIPage(t *testing.T) {
 
 	// Verify page content
 	assert.Contains(t, output, "Index Status", "Page should have Index Status title")
-	assert.Contains(t, output, "GEMINI_API_KEY", "Page should mention GEMINI_API_KEY")
+	assert.Contains(t, output, "GOOGLE_GEMINI_API_KEY", "Page should mention GOOGLE_GEMINI_API_KEY")
 
 	// Verify API key warning is shown
 	assert.True(t,
@@ -956,7 +956,7 @@ func TestIndexStatusUIPage(t *testing.T) {
 			strings.Contains(output, "api_key_missing"),
 		"Page should show API key missing status for project")
 
-	t.Log("EXPECTED: Index status UI shows GEMINI_API_KEY warning")
+	t.Log("EXPECTED: Index status UI shows GOOGLE_GEMINI_API_KEY warning")
 	t.Log("Page contains API key status and project indexing information")
 }
 

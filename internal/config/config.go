@@ -19,7 +19,7 @@ type Config struct {
 	Service  ServiceConfig  `toml:"service"`
 	API      APIConfig      `toml:"api"`
 	MCP      MCPConfig      `toml:"mcp"`
-	LLM      LLMConfig      `toml:"llm"`
+	Gemini   GeminiConfig   `toml:"gemini"`
 	Index    IndexConfig    `toml:"index"`
 	Logging  LoggingConfig  `toml:"logging"`
 	Security SecurityConfig `toml:"security"`
@@ -50,14 +50,12 @@ type MCPConfig struct {
 	AutoBuildIndex bool `toml:"auto_build_index"`
 }
 
-// LLMConfig contains LLM integration settings.
-type LLMConfig struct {
-	Provider    string  `toml:"provider"`
-	APIKey      string  `toml:"api_key"`
-	Model       string  `toml:"model"`
-	MaxTokens   int     `toml:"max_tokens"`
-	Temperature float64 `toml:"temperature"`
-	TimeoutSecs int     `toml:"timeout_seconds"`
+// GeminiConfig contains Google Gemini API settings.
+type GeminiConfig struct {
+	APIKey      string `toml:"api_key"`
+	Model       string `toml:"model"`
+	Thinking    string `toml:"thinking"` // NONE, LOW, NORMAL, HIGH
+	TimeoutSecs int    `toml:"timeout_seconds"`
 }
 
 // IndexConfig contains indexing settings.
@@ -153,12 +151,10 @@ func DefaultConfig() *Config {
 			Enabled:        true,
 			AutoBuildIndex: true,
 		},
-		LLM: LLMConfig{
-			Provider:    "gemini",
-			APIKey:      os.Getenv("GEMINI_API_KEY"),
-			Model:       "gemini-1.5-flash",
-			MaxTokens:   1024,
-			Temperature: 0.3,
+		Gemini: GeminiConfig{
+			APIKey:      os.Getenv("GOOGLE_GEMINI_API_KEY"),
+			Model:       "gemini-3-flash-preview",
+			Thinking:    "NORMAL",
 			TimeoutSecs: 30,
 		},
 		Index: IndexConfig{
@@ -351,17 +347,13 @@ enabled = true
 # Automatically build index when starting MCP server
 auto_build_index = true
 
-[llm]
-# LLM provider (gemini, openai, anthropic)
-provider = "gemini"
-# API key (can use environment variable: ${GEMINI_API_KEY})
-api_key = "${GEMINI_API_KEY}"
-# Model to use
-model = "gemini-1.5-flash"
-# Maximum tokens for responses
-max_tokens = 1024
-# Temperature for generation (0.0-1.0)
-temperature = 0.3
+[gemini]
+# Google Gemini API key (required for semantic indexing)
+api_key = "${GOOGLE_GEMINI_API_KEY}"
+# Gemini model to use
+model = "gemini-3-flash-preview"
+# Thinking level: NONE, LOW, NORMAL, HIGH
+thinking = "NORMAL"
 # Timeout in seconds
 timeout_seconds = 30
 
@@ -517,8 +509,10 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("rate_limit_per_minute cannot be negative")
 	}
 
-	if c.LLM.Temperature < 0 || c.LLM.Temperature > 1 {
-		return fmt.Errorf("temperature must be between 0.0 and 1.0")
+	// Validate Gemini thinking level
+	validThinking := map[string]bool{"NONE": true, "LOW": true, "NORMAL": true, "HIGH": true, "": true}
+	if !validThinking[c.Gemini.Thinking] {
+		return fmt.Errorf("invalid thinking level: %s (must be NONE, LOW, NORMAL, or HIGH)", c.Gemini.Thinking)
 	}
 
 	if c.Security.TLSEnabled {

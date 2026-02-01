@@ -125,13 +125,13 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleIndexStatus(w http.ResponseWriter, r *http.Request) {
-	// Check GEMINI_API_KEY status
-	apiKeyConfigured := s.cfg.LLM.APIKey != ""
+	// Check GOOGLE_GEMINI_API_KEY status
+	apiKeyConfigured := s.cfg.Gemini.APIKey != ""
 	apiKeyStatus := "Not configured"
 	if apiKeyConfigured {
 		apiKeyStatus = "Configured"
 	} else {
-		apiKeyStatus = "GEMINI_API_KEY not provided"
+		apiKeyStatus = "GOOGLE_GEMINI_API_KEY not provided"
 	}
 
 	// Get all projects and their index status
@@ -157,7 +157,7 @@ func (s *Server) handleIndexStatus(w http.ResponseWriter, r *http.Request) {
 
 			if !apiKeyConfigured {
 				status.IndexStatus = "api_key_missing"
-				status.ErrorMessage = "GEMINI_API_KEY not provided - semantic indexing unavailable"
+				status.ErrorMessage = "GOOGLE_GEMINI_API_KEY not provided - semantic indexing unavailable"
 			} else if stats.DocumentCount == 0 {
 				status.IndexStatus = "empty"
 				status.ErrorMessage = "No documents indexed"
@@ -759,12 +759,12 @@ func (s *Server) renderDocs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) renderIndexStatus(w http.ResponseWriter, r *http.Request) {
-	// Check GEMINI_API_KEY status
-	apiKeyConfigured := s.cfg.LLM.APIKey != ""
+	// Check GOOGLE_GEMINI_API_KEY status
+	apiKeyConfigured := s.cfg.Gemini.APIKey != ""
 	apiKeyStatus := "Configured"
 	apiKeyClass := "success"
 	if !apiKeyConfigured {
-		apiKeyStatus = "GEMINI_API_KEY not provided"
+		apiKeyStatus = "GOOGLE_GEMINI_API_KEY not provided"
 		apiKeyClass = "error"
 	}
 
@@ -889,7 +889,7 @@ func (s *Server) renderIndexStatus(w http.ResponseWriter, r *http.Request) {
             <div class="status-card">
                 <h3>API Configuration</h3>
                 <div>
-                    <strong>GEMINI_API_KEY:</strong>
+                    <strong>GOOGLE_GEMINI_API_KEY:</strong>
                     <span class="status-indicator %s">%s</span>
                 </div>
             </div>
@@ -937,7 +937,7 @@ func (s *Server) renderIndexStatus(w http.ResponseWriter, r *http.Request) {
 				if !apiKeyConfigured {
 					status = "api_key_missing"
 					statusLabel = "API Key Missing"
-					errorMsg = "GEMINI_API_KEY not provided"
+					errorMsg = "GOOGLE_GEMINI_API_KEY not provided"
 				} else if docCount == 0 {
 					status = "empty"
 					statusLabel = "Empty"

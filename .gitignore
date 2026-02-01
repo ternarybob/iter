@@ -44,3 +44,6 @@ test/docker/.env
 
 # Test results
 tests/results
+
+# Local config (use config.example.toml as reference)
+configs/config.toml

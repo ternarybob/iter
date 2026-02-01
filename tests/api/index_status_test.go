@@ -62,9 +62,9 @@ func TestIndexStatusAPIWithoutProjects(t *testing.T) {
 	// Save response
 	env.SaveJSON("index-status-response.json", status)
 
-	// Verify GEMINI_API_KEY status (should NOT be configured in test environment)
+	// Verify GOOGLE_GEMINI_API_KEY status (should NOT be configured in test environment)
 	if status.GeminiAPIKeyConfigured {
-		t.Error("GEMINI_API_KEY should not be configured in test environment")
+		t.Error("GOOGLE_GEMINI_API_KEY should not be configured in test environment")
 	}
 
 	if !strings.Contains(status.GeminiAPIKeyStatus, "not provided") {
@@ -77,7 +77,7 @@ func TestIndexStatusAPIWithoutProjects(t *testing.T) {
 	}
 
 	duration := time.Since(startTime)
-	env.WriteSummary(true, duration, "Index status API returns correct response with no projects. GEMINI_API_KEY not provided.")
+	env.WriteSummary(true, duration, "Index status API returns correct response with no projects. GOOGLE_GEMINI_API_KEY not provided.")
 	t.Logf("Index status (no projects): API Key=%s, Projects=%d", status.GeminiAPIKeyStatus, len(status.Projects))
 }
 
@@ -163,9 +163,9 @@ func TestIndexStatusAPIWithProjects(t *testing.T) {
 	// Save response
 	env.SaveJSON("index-status-response.json", status)
 
-	// Verify GEMINI_API_KEY status
+	// Verify GOOGLE_GEMINI_API_KEY status
 	if status.GeminiAPIKeyConfigured {
-		t.Error("GEMINI_API_KEY should not be configured")
+		t.Error("GOOGLE_GEMINI_API_KEY should not be configured")
 	}
 	if !strings.Contains(status.GeminiAPIKeyStatus, "not provided") {
 		t.Errorf("Status should indicate API key not provided, got: %s", status.GeminiAPIKeyStatus)
@@ -181,19 +181,19 @@ func TestIndexStatusAPIWithProjects(t *testing.T) {
 		if proj.IndexStatus != "api_key_missing" {
 			t.Errorf("Project %s should have api_key_missing status, got: %s", proj.Name, proj.IndexStatus)
 		}
-		if !strings.Contains(proj.ErrorMessage, "GEMINI_API_KEY") {
-			t.Errorf("Error message should mention GEMINI_API_KEY, got: %s", proj.ErrorMessage)
+		if !strings.Contains(proj.ErrorMessage, "GOOGLE_GEMINI_API_KEY") {
+			t.Errorf("Error message should mention GOOGLE_GEMINI_API_KEY, got: %s", proj.ErrorMessage)
 		}
 	}
 
 	duration := time.Since(startTime)
 	details := "Index status API returns correct response with 2 projects. " +
-		"All projects show api_key_missing status because GEMINI_API_KEY is not provided."
+		"All projects show api_key_missing status because GOOGLE_GEMINI_API_KEY is not provided."
 	env.WriteSummary(true, duration, details)
 	t.Logf("Index status (with projects): API Key=%s, Projects=%d", status.GeminiAPIKeyStatus, len(status.Projects))
 }
 
-// TestIndexStatusRequiresGeminiAPIKey verifies that semantic indexing requires GEMINI_API_KEY.
+// TestIndexStatusRequiresGeminiAPIKey verifies that semantic indexing requires GOOGLE_GEMINI_API_KEY.
 func TestIndexStatusRequiresGeminiAPIKey(t *testing.T) {
 	env := common.NewTestEnv(t, "api", "index-status-api-key-required")
 	defer env.Cleanup()
@@ -248,7 +248,7 @@ func TestIndexStatusRequiresGeminiAPIKey(t *testing.T) {
 
 	// The test MUST show semantic indexing is unavailable without API key
 	if status.GeminiAPIKeyConfigured {
-		t.Fatal("Test environment should NOT have GEMINI_API_KEY configured")
+		t.Fatal("Test environment should NOT have GOOGLE_GEMINI_API_KEY configured")
 	}
 
 	// Verify the project shows the correct status
@@ -260,14 +260,14 @@ func TestIndexStatusRequiresGeminiAPIKey(t *testing.T) {
 	if proj1.IndexStatus != "api_key_missing" {
 		t.Errorf("Index status should be 'api_key_missing', got: %s", proj1.IndexStatus)
 	}
-	if !strings.Contains(proj1.ErrorMessage, "GEMINI_API_KEY not provided") {
-		t.Errorf("Error message should indicate GEMINI_API_KEY is not provided, got: %s", proj1.ErrorMessage)
+	if !strings.Contains(proj1.ErrorMessage, "GOOGLE_GEMINI_API_KEY not provided") {
+		t.Errorf("Error message should indicate GOOGLE_GEMINI_API_KEY is not provided, got: %s", proj1.ErrorMessage)
 	}
 
 	duration := time.Since(startTime)
-	details := "EXPECTED: Semantic indexing is unavailable without GEMINI_API_KEY. " +
+	details := "EXPECTED: Semantic indexing is unavailable without GOOGLE_GEMINI_API_KEY. " +
 		"Project status: " + proj1.IndexStatus + " - " + proj1.ErrorMessage
 	env.WriteSummary(true, duration, details)
-	t.Log("EXPECTED: Semantic indexing is unavailable without GEMINI_API_KEY")
+	t.Log("EXPECTED: Semantic indexing is unavailable without GOOGLE_GEMINI_API_KEY")
 	t.Logf("Project index status: %s - %s", proj1.IndexStatus, proj1.ErrorMessage)
 }

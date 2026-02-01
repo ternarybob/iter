@@ -357,13 +357,12 @@ func (e *TestEnv) WriteSummary(passed bool, duration time.Duration, details stri
 func findBinary() string {
 	root := getProjectRoot()
 
-	// Try project root first
+	// Try bin/ directory first (preferred location)
 	paths := []string{
-		filepath.Join(root, "iter-service"),
-		"./iter-service",
-		"../iter-service",
-		"../../iter-service",
+		filepath.Join(root, "bin", "iter-service"),
 		"./bin/iter-service",
+		"../bin/iter-service",
+		"../../bin/iter-service",
 	}
 
 	// Also try to find in PATH

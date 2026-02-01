@@ -23,11 +23,17 @@ WORKDIR /app
 # Copy binary
 COPY --from=builder /build/iter-service /app/iter-service
 
+# Copy config from repo (config.example.toml is the tracked reference)
+COPY configs/config.example.toml /app/config.toml
+
 # Create data directory
 RUN mkdir -p /app/data
 
-# Write container config (bind to 0.0.0.0 for container networking)
-RUN printf '[service]\nhost = "0.0.0.0"\nport = 19000\ndata_dir = "/app/data"\n\n[api]\nenabled = true\n\n[mcp]\nenabled = true\n\n[logging]\nlevel = "debug"\nformat = "text"\noutput = "stdout"\n' > /app/config.toml
+# Override config for container networking (bind to 0.0.0.0, use container paths)
+RUN sed -i 's/host = "127.0.0.1"/host = "0.0.0.0"/' /app/config.toml && \
+    sed -i 's/port = 8420/port = 19000/' /app/config.toml && \
+    sed -i 's/output = \["file"\]/output = ["stdout"]/' /app/config.toml && \
+    sed -i 's/level = "info"/level = "debug"/' /app/config.toml
 
 # Expose port
 EXPOSE 19000

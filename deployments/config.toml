@@ -12,7 +12,7 @@
 # host = "127.0.0.1"
 
 # [llm]
-# api_key = "${GEMINI_API_KEY}"
+# api_key = "${GOOGLE_GEMINI_API_KEY}"
 
 # [logging]
 # level = "info"

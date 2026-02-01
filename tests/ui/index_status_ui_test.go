@@ -53,9 +53,9 @@ func TestIndexStatusUIWithoutProjects(t *testing.T) {
 		t.Error("Expected 'Index Status' in page title")
 	}
 
-	// Verify GEMINI_API_KEY status is shown as NOT configured
-	if !strings.Contains(htmlStr, "GEMINI_API_KEY") {
-		t.Error("Expected GEMINI_API_KEY mentioned on page")
+	// Verify GOOGLE_GEMINI_API_KEY status is shown as NOT configured
+	if !strings.Contains(htmlStr, "GOOGLE_GEMINI_API_KEY") {
+		t.Error("Expected GOOGLE_GEMINI_API_KEY mentioned on page")
 	}
 
 	if !strings.Contains(htmlStr, "not provided") && !strings.Contains(htmlStr, "Not configured") {
@@ -76,7 +76,7 @@ func TestIndexStatusUIWithoutProjects(t *testing.T) {
 	env.RequireScreenshots([]string{"01-before", "02-after"})
 
 	duration := time.Since(startTime)
-	env.WriteSummary(true, duration, "Index status UI shows GEMINI_API_KEY not provided with no projects registered")
+	env.WriteSummary(true, duration, "Index status UI shows GOOGLE_GEMINI_API_KEY not provided with no projects registered")
 }
 
 // TestIndexStatusUIWithProjects tests the index status page when projects are registered.
@@ -144,8 +144,8 @@ func TestIndexStatusUIWithProjects(t *testing.T) {
 	env.SaveResult("index-status-page.html", html)
 
 	// Verify page shows API key not configured
-	if !strings.Contains(htmlStr, "GEMINI_API_KEY") {
-		t.Error("Page should mention GEMINI_API_KEY")
+	if !strings.Contains(htmlStr, "GOOGLE_GEMINI_API_KEY") {
+		t.Error("Page should mention GOOGLE_GEMINI_API_KEY")
 	}
 
 	if !strings.Contains(htmlStr, "not provided") && !strings.Contains(htmlStr, "error") {
@@ -170,7 +170,7 @@ func TestIndexStatusUIWithProjects(t *testing.T) {
 	env.RequireScreenshots([]string{"01-before", "02-after"})
 
 	duration := time.Since(startTime)
-	env.WriteSummary(true, duration, "Index status UI shows 2 projects with GEMINI_API_KEY not provided warning")
+	env.WriteSummary(true, duration, "Index status UI shows 2 projects with GOOGLE_GEMINI_API_KEY not provided warning")
 }
 
 // TestIndexStatusUIShowsGeminiAPIKeyWarning verifies the UI prominently displays the API key warning.
@@ -232,9 +232,9 @@ func TestIndexStatusUIShowsGeminiAPIKeyWarning(t *testing.T) {
 	htmlStr := string(html)
 	env.SaveResult("index-status-page.html", html)
 
-	// Verify GEMINI_API_KEY warning is shown
-	if !strings.Contains(htmlStr, "GEMINI_API_KEY") {
-		t.Error("Page MUST mention GEMINI_API_KEY")
+	// Verify GOOGLE_GEMINI_API_KEY warning is shown
+	if !strings.Contains(htmlStr, "GOOGLE_GEMINI_API_KEY") {
+		t.Error("Page MUST mention GOOGLE_GEMINI_API_KEY")
 	}
 
 	// Verify the error status indicator
@@ -260,10 +260,10 @@ func TestIndexStatusUIShowsGeminiAPIKeyWarning(t *testing.T) {
 	env.RequireScreenshots([]string{"01-before", "02-after"})
 
 	duration := time.Since(startTime)
-	details := "EXPECTED: Index status UI shows GEMINI_API_KEY warning prominently. " +
-		"Semantic indexing is unavailable without GEMINI_API_KEY."
+	details := "EXPECTED: Index status UI shows GOOGLE_GEMINI_API_KEY warning prominently. " +
+		"Semantic indexing is unavailable without GOOGLE_GEMINI_API_KEY."
 	env.WriteSummary(true, duration, details)
-	t.Log("EXPECTED: Index status UI shows GEMINI_API_KEY warning")
+	t.Log("EXPECTED: Index status UI shows GOOGLE_GEMINI_API_KEY warning")
 }
 
 // TestIndexStatusUINavigation tests that the index status page is accessible from navigation.
@@ -310,7 +310,7 @@ func TestIndexStatusUINavigation(t *testing.T) {
 		t.Error("Should be on index status page")
 	}
 
-	if !strings.Contains(htmlStr, "GEMINI_API_KEY") {
+	if !strings.Contains(htmlStr, "GOOGLE_GEMINI_API_KEY") {
 		t.Error("Page should show API key status")
 	}
 

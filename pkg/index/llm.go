@@ -1,133 +1,132 @@
 package index
 
 import (
-	"bytes"
-	"encoding/json"
+	"context"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
+	"strings"
 	"time"
+
+	"google.golang.org/genai"
 )
 
-// LLMClient provides access to LLM APIs for summarization.
+// LLMClient provides access to Gemini API for summarization.
 type LLMClient struct {
-	apiKey     string
-	baseURL    string
-	model      string
-	httpClient *http.Client
+	client   *genai.Client
+	model    string
+	thinking string
+	timeout  time.Duration
 }
 
 // LLMConfig configures the LLM client.
 type LLMConfig struct {
-	APIKey  string
-	BaseURL string
-	Model   string
-	Timeout time.Duration
+	APIKey   string
+	Model    string
+	Thinking string // NONE, LOW, NORMAL, HIGH
+	Timeout  time.Duration
 }
 
 // DefaultLLMConfig returns the default LLM configuration.
-// Uses Gemini Flash by default.
 func DefaultLLMConfig() LLMConfig {
 	return LLMConfig{
-		APIKey:  os.Getenv("GEMINI_API_KEY"),
-		BaseURL: "https://generativelanguage.googleapis.com/v1beta",
-		Model:   "gemini-1.5-flash",
-		Timeout: 30 * time.Second,
+		APIKey:   os.Getenv("GOOGLE_GEMINI_API_KEY"),
+		Model:    "gemini-3-flash-preview",
+		Thinking: "NORMAL",
+		Timeout:  30 * time.Second,
 	}
 }
 
-// NewLLMClient creates a new LLM client.
+// NewLLMClient creates a new LLM client using the Gemini SDK.
 // Returns nil if no API key is configured.
 func NewLLMClient(cfg LLMConfig) *LLMClient {
 	if cfg.APIKey == "" {
 		return nil
 	}
 
-	if cfg.BaseURL == "" {
-		cfg.BaseURL = "https://generativelanguage.googleapis.com/v1beta"
-	}
 	if cfg.Model == "" {
-		cfg.Model = "gemini-1.5-flash"
+		cfg.Model = "gemini-3-flash-preview"
+	}
+	if cfg.Thinking == "" {
+		cfg.Thinking = "NORMAL"
 	}
 	if cfg.Timeout == 0 {
 		cfg.Timeout = 30 * time.Second
 	}
 
+	ctx := context.Background()
+	client, err := genai.NewClient(ctx, &genai.ClientConfig{
+		APIKey:  cfg.APIKey,
+		Backend: genai.BackendGeminiAPI,
+	})
+	if err != nil {
+		return nil
+	}
+
 	return &LLMClient{
-		apiKey:  cfg.APIKey,
-		baseURL: cfg.BaseURL,
-		model:   cfg.Model,
-		httpClient: &http.Client{
-			Timeout: cfg.Timeout,
-		},
+		client:   client,
+		model:    cfg.Model,
+		thinking: cfg.Thinking,
+		timeout:  cfg.Timeout,
 	}
 }
 
-// Generate generates text from a prompt using the LLM.
+// thinkingLevel converts string thinking level to SDK enum.
+func thinkingLevel(level string) genai.ThinkingLevel {
+	switch strings.ToUpper(level) {
+	case "NONE":
+		return genai.ThinkingLevelMinimal
+	case "LOW":
+		return genai.ThinkingLevelLow
+	case "NORMAL":
+		return genai.ThinkingLevelMedium
+	case "HIGH":
+		return genai.ThinkingLevelHigh
+	default:
+		return genai.ThinkingLevelMedium
+	}
+}
+
+// Generate generates text from a prompt using the Gemini API.
 // Returns the generated text and the model used.
 func (c *LLMClient) Generate(prompt string) (string, string, error) {
-	if c == nil {
+	if c == nil || c.client == nil {
 		return "", "", fmt.Errorf("LLM client not configured")
 	}
 
-	// Build Gemini API request
-	reqBody := geminiRequest{
-		Contents: []geminiContent{
-			{
-				Parts: []geminiPart{
-					{Text: prompt},
-				},
-			},
-		},
-		GenerationConfig: geminiGenerationConfig{
-			Temperature:     0.3,
-			MaxOutputTokens: 256,
+	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
+	defer cancel()
+
+	// Configure generation with thinking level
+	config := &genai.GenerateContentConfig{
+		ThinkingConfig: &genai.ThinkingConfig{
+			ThinkingLevel: thinkingLevel(c.thinking),
 		},
 	}
 
-	jsonData, err := json.Marshal(reqBody)
+	// Use genai.Text helper to create content from text
+	result, err := c.client.Models.GenerateContent(ctx, c.model, genai.Text(prompt), config)
 	if err != nil {
-		return "", "", fmt.Errorf("marshal request: %w", err)
+		return "", "", fmt.Errorf("generate content: %w", err)
 	}
 
-	// Make request
-	url := fmt.Sprintf("%s/models/%s:generateContent?key=%s",
-		c.baseURL, c.model, c.apiKey)
-
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return "", "", fmt.Errorf("create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return "", "", fmt.Errorf("http request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", "", fmt.Errorf("read response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return "", "", fmt.Errorf("API error %d: %s", resp.StatusCode, string(body))
-	}
-
-	// Parse response
-	var geminiResp geminiResponse
-	if err := json.Unmarshal(body, &geminiResp); err != nil {
-		return "", "", fmt.Errorf("unmarshal response: %w", err)
-	}
-
-	if len(geminiResp.Candidates) == 0 || len(geminiResp.Candidates[0].Content.Parts) == 0 {
+	if result == nil || len(result.Candidates) == 0 {
 		return "", "", fmt.Errorf("empty response from API")
 	}
 
-	text := geminiResp.Candidates[0].Content.Parts[0].Text
+	// Extract text from response parts
+	var text string
+	if result.Candidates[0].Content != nil {
+		for _, part := range result.Candidates[0].Content.Parts {
+			if part != nil && part.Text != "" {
+				text += part.Text
+			}
+		}
+	}
+
+	if text == "" {
+		return "", "", fmt.Errorf("no text in response")
+	}
+
 	return text, c.model, nil
 }
 
@@ -162,7 +161,7 @@ Summary:`, commitMessage, diff)
 
 // IsConfigured returns whether the LLM client has an API key.
 func (c *LLMClient) IsConfigured() bool {
-	return c != nil && c.apiKey != ""
+	return c != nil && c.client != nil
 }
 
 // Model returns the model name.
@@ -171,32 +170,4 @@ func (c *LLMClient) Model() string {
 		return ""
 	}
 	return c.model
-}
-
-// Gemini API types
-
-type geminiRequest struct {
-	Contents         []geminiContent        `json:"contents"`
-	GenerationConfig geminiGenerationConfig `json:"generationConfig,omitempty"`
-}
-
-type geminiContent struct {
-	Parts []geminiPart `json:"parts"`
-}
-
-type geminiPart struct {
-	Text string `json:"text"`
-}
-
-type geminiGenerationConfig struct {
-	Temperature     float64 `json:"temperature,omitempty"`
-	MaxOutputTokens int     `json:"maxOutputTokens,omitempty"`
-}
-
-type geminiResponse struct {
-	Candidates []geminiCandidate `json:"candidates"`
-}
-
-type geminiCandidate struct {
-	Content geminiContent `json:"content"`
 }

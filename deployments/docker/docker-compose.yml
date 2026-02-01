@@ -23,7 +23,7 @@ services:
       - iter-data:/data
       - ${CONFIG_FILE:-../config.toml}:/data/config.toml:ro
     environment:
-      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GOOGLE_GEMINI_API_KEY=${GOOGLE_GEMINI_API_KEY:-}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8420/health"]
       interval: 30s
