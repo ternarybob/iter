@@ -1,4 +1,4 @@
-// Package e2e provides end-to-end integration tests for iter-service.
+// Package mcp provides MCP integration tests for iter-service.
 // These tests validate that MCP returns project-specific data correctly.
 //
 // Test scenario:
@@ -6,17 +6,20 @@
 //  2. Register and index both projects in iter-service
 //  3. Query each project via MCP and validate only that project's data is returned
 //
-// Run with: go test -v ./tests/e2e/... -build-images
-package e2e
+// Run with:
+//
+//	TEST_DOCKER=1 go test -v ./tests/mcp/...
+//
+// NOTE: These tests share TestMain with mcp_test.go (same package).
+// They require Docker mode (TEST_DOCKER=1) and will skip in local mode.
+package mcp
 
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -25,40 +28,21 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/ternarybob/iter/tests/common"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/network"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-var buildImages = flag.Bool("build-images", false, "Build Docker images before running tests")
-
-func TestMain(m *testing.M) {
-	flag.Parse()
-
-	if *buildImages {
-		fmt.Println("Building Docker images...")
-		cmd := exec.Command("docker", "compose", "-f", "tests/docker/docker-compose.yml", "build")
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			fmt.Printf("Failed to build images: %v\n", err)
-			os.Exit(1)
-		}
+// requireDockerMode skips test if not running in Docker mode.
+func requireDockerMode(t *testing.T) {
+	t.Helper()
+	if testSetup.Mode != common.ModeDocker {
+		t.Skip("Test requires Docker mode (TEST_DOCKER=1)")
 	}
-
-	// Check required images exist
-	for _, img := range []string{"docker-iter:latest", "docker-claude:latest"} {
-		cmd := exec.Command("docker", "image", "inspect", img)
-		if err := cmd.Run(); err != nil {
-			fmt.Printf("Image %s not found. Build with:\n", img)
-			fmt.Println("  docker compose -f tests/docker/docker-compose.yml build")
-			fmt.Println("Or run with: go test ./tests/e2e/... -build-images")
-			os.Exit(1)
-		}
-	}
-
-	os.Exit(m.Run())
 }
+
+// NOTE: TestMain is in mcp_test.go for the entire package
 
 // E2EEnv holds the end-to-end test environment.
 type E2EEnv struct {
@@ -73,13 +57,19 @@ type E2EEnv struct {
 }
 
 // NewE2EEnv creates a new E2E test environment.
-func NewE2EEnv(t *testing.T) (*E2EEnv, error) {
+// testName is used for per-test result directories.
+func NewE2EEnv(t *testing.T, testName string) (*E2EEnv, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 
-	// Create results directory using absolute path from project root
+	// Create results directory: tests/results/mcp/{testName}/
+	// Per-test directories - each run overwrites previous results
 	root := getProjectRoot()
-	resultsDir := filepath.Join(root, "tests", "results", "e2e", time.Now().Format("2006-01-02_15-04-05"))
+	resultsDir := filepath.Join(root, "tests", "results", "mcp", testName)
+
+	// Remove old results to ensure clean state
+	os.RemoveAll(resultsDir)
+
 	if err := os.MkdirAll(resultsDir, 0755); err != nil {
 		cancel()
 		return nil, fmt.Errorf("create results dir: %w", err)
@@ -427,6 +417,131 @@ func (e *E2EEnv) SaveResult(name string, data string) error {
 	return os.WriteFile(path, []byte(data), 0644)
 }
 
+// TestSummary contains the structured test results.
+type TestSummary struct {
+	TestName    string   `json:"test_name"`
+	Passed      bool     `json:"passed"`
+	Duration    string   `json:"duration"`
+	Timestamp   string   `json:"timestamp"`
+	Screenshots []string `json:"screenshots"`
+	Logs        []string `json:"logs"`
+	Details     string   `json:"details"`
+	Errors      []string `json:"errors"`
+}
+
+// WriteSummary writes test summary to both summary.json and SUMMARY.md.
+func (e *E2EEnv) WriteSummary(passed bool, duration time.Duration, details string, errors ...string) error {
+	timestamp := time.Now().Format(time.RFC3339)
+
+	// Collect screenshots
+	screenshots := e.collectScreenshots()
+
+	// Collect logs
+	logs := e.collectLogs()
+
+	summary := TestSummary{
+		TestName:    filepath.Base(e.resultsDir),
+		Passed:      passed,
+		Duration:    duration.String(),
+		Timestamp:   timestamp,
+		Screenshots: screenshots,
+		Logs:        logs,
+		Details:     details,
+		Errors:      errors,
+	}
+
+	// Write summary.json
+	data, err := json.MarshalIndent(summary, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal summary: %w", err)
+	}
+	if err := e.SaveResult("summary.json", string(data)); err != nil {
+		return fmt.Errorf("write summary.json: %w", err)
+	}
+
+	// Write SUMMARY.md
+	return e.writeSummaryMarkdown(summary)
+}
+
+// collectScreenshots returns list of screenshot files in results directory.
+func (e *E2EEnv) collectScreenshots() []string {
+	var screenshots []string
+	entries, err := os.ReadDir(e.resultsDir)
+	if err != nil {
+		return screenshots
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".png") {
+			screenshots = append(screenshots, entry.Name())
+		}
+	}
+	return screenshots
+}
+
+// collectLogs returns list of log files in results directory.
+func (e *E2EEnv) collectLogs() []string {
+	var logs []string
+	entries, err := os.ReadDir(e.resultsDir)
+	if err != nil {
+		return logs
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".log") {
+			logs = append(logs, entry.Name())
+		}
+	}
+	return logs
+}
+
+// writeSummaryMarkdown writes the SUMMARY.md file.
+func (e *E2EEnv) writeSummaryMarkdown(summary TestSummary) error {
+	result := "PASS"
+	if !summary.Passed {
+		result = "FAIL"
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("# Test: %s\n\n", summary.TestName))
+	sb.WriteString(fmt.Sprintf("**Result:** %s\n", result))
+	sb.WriteString(fmt.Sprintf("**Duration:** %s\n", summary.Duration))
+	sb.WriteString(fmt.Sprintf("**Timestamp:** %s\n\n", summary.Timestamp))
+
+	sb.WriteString("## Screenshots\n")
+	if len(summary.Screenshots) == 0 {
+		sb.WriteString("- None captured\n")
+	} else {
+		for _, s := range summary.Screenshots {
+			sb.WriteString(fmt.Sprintf("- %s\n", s))
+		}
+	}
+	sb.WriteString("\n")
+
+	sb.WriteString("## Logs\n")
+	if len(summary.Logs) == 0 {
+		sb.WriteString("- None captured\n")
+	} else {
+		for _, l := range summary.Logs {
+			sb.WriteString(fmt.Sprintf("- %s\n", l))
+		}
+	}
+	sb.WriteString("\n")
+
+	sb.WriteString("## Details\n")
+	sb.WriteString(summary.Details)
+	sb.WriteString("\n\n")
+
+	sb.WriteString("## Errors\n")
+	if len(summary.Errors) == 0 {
+		sb.WriteString("None\n")
+	} else {
+		for _, err := range summary.Errors {
+			sb.WriteString(fmt.Sprintf("- %s\n", err))
+		}
+	}
+
+	return e.SaveResult("SUMMARY.md", sb.String())
+}
+
 // Cleanup stops containers and releases resources.
 func (e *E2EEnv) Cleanup() {
 	if e.claude != nil {
@@ -462,14 +577,22 @@ func getProjectRoot() string {
 
 // TestProjectIsolation validates that MCP returns project-specific data.
 // This is the core test: when querying project-alpha, we should NOT see project-beta symbols.
+// Requires Docker mode (TEST_DOCKER=1).
 func TestProjectIsolation(t *testing.T) {
+	requireDockerMode(t)
 	if testing.Short() {
 		t.Skip("Skipping E2E tests in short mode")
 	}
 
-	env, err := NewE2EEnv(t)
+	startTime := time.Now()
+	env, err := NewE2EEnv(t, "TestProjectIsolation")
 	require.NoError(t, err, "Failed to create E2E environment")
 	defer env.Cleanup()
+	defer func() {
+		// Write test summary at the end
+		duration := time.Since(startTime)
+		env.WriteSummary(t.Failed() == false, duration, "MCP project isolation test - validates project-specific data filtering")
+	}()
 
 	// Step 1: Start containers
 	t.Log("Starting iter-service container...")
@@ -606,7 +729,9 @@ func TestProjectIsolation(t *testing.T) {
 }
 
 // TestClaudeMCPQuery tests Claude CLI querying iter MCP (requires credentials).
+// Requires Docker mode (TEST_DOCKER=1).
 func TestClaudeMCPQuery(t *testing.T) {
+	requireDockerMode(t)
 	if testing.Short() {
 		t.Skip("Skipping E2E tests in short mode")
 	}
@@ -617,9 +742,14 @@ func TestClaudeMCPQuery(t *testing.T) {
 		t.Skip("No Claude credentials - skipping Claude CLI test")
 	}
 
-	env, err := NewE2EEnv(t)
+	startTime := time.Now()
+	env, err := NewE2EEnv(t, "TestClaudeMCPQuery")
 	require.NoError(t, err, "Failed to create E2E environment")
 	defer env.Cleanup()
+	defer func() {
+		duration := time.Since(startTime)
+		env.WriteSummary(t.Failed() == false, duration, "Claude CLI MCP query test - validates Claude can query iter MCP server")
+	}()
 
 	// Start containers
 	require.NoError(t, env.StartIter(), "Failed to start iter")
@@ -694,7 +824,9 @@ func TestClaudeMCPQuery(t *testing.T) {
 // TestClaudeMCPExactCodeRetrieval tests that Claude can retrieve exact code content via MCP.
 // This test requires GOOGLE_GEMINI_API_KEY to be configured for semantic indexing.
 // Without GOOGLE_GEMINI_API_KEY, the test SHOULD FAIL because semantic search won't return accurate results.
+// Requires Docker mode (TEST_DOCKER=1).
 func TestClaudeMCPExactCodeRetrieval(t *testing.T) {
+	requireDockerMode(t)
 	if testing.Short() {
 		t.Skip("Skipping E2E tests in short mode")
 	}
@@ -705,9 +837,14 @@ func TestClaudeMCPExactCodeRetrieval(t *testing.T) {
 		t.Skip("No Claude credentials - skipping Claude CLI test")
 	}
 
-	env, err := NewE2EEnv(t)
+	startTime := time.Now()
+	env, err := NewE2EEnv(t, "TestClaudeMCPExactCodeRetrieval")
 	require.NoError(t, err, "Failed to create E2E environment")
 	defer env.Cleanup()
+	defer func() {
+		duration := time.Since(startTime)
+		env.WriteSummary(t.Failed() == false, duration, "Claude MCP exact code retrieval - validates semantic search returns accurate code")
+	}()
 
 	// Start containers
 	require.NoError(t, env.StartIter(), "Failed to start iter")
@@ -838,14 +975,21 @@ func TestClaudeMCPExactCodeRetrieval(t *testing.T) {
 }
 
 // TestIndexStatusWithoutGeminiAPIKey verifies that index status correctly reports when API key is missing.
+// Requires Docker mode (TEST_DOCKER=1).
 func TestIndexStatusWithoutGeminiAPIKey(t *testing.T) {
+	requireDockerMode(t)
 	if testing.Short() {
 		t.Skip("Skipping E2E tests in short mode")
 	}
 
-	env, err := NewE2EEnv(t)
+	startTime := time.Now()
+	env, err := NewE2EEnv(t, "TestIndexStatusWithoutGeminiAPIKey")
 	require.NoError(t, err, "Failed to create E2E environment")
 	defer env.Cleanup()
+	defer func() {
+		duration := time.Since(startTime)
+		env.WriteSummary(t.Failed() == false, duration, "Index status API key check - validates API reports missing Gemini API key")
+	}()
 
 	// Start containers
 	require.NoError(t, env.StartIter(), "Failed to start iter")
@@ -905,14 +1049,21 @@ func TestIndexStatusWithoutGeminiAPIKey(t *testing.T) {
 }
 
 // TestIndexStatusUIPage tests the index status web UI page.
+// Requires Docker mode (TEST_DOCKER=1).
 func TestIndexStatusUIPage(t *testing.T) {
+	requireDockerMode(t)
 	if testing.Short() {
 		t.Skip("Skipping E2E tests in short mode")
 	}
 
-	env, err := NewE2EEnv(t)
+	startTime := time.Now()
+	env, err := NewE2EEnv(t, "TestIndexStatusUIPage")
 	require.NoError(t, err, "Failed to create E2E environment")
 	defer env.Cleanup()
+	defer func() {
+		duration := time.Since(startTime)
+		env.WriteSummary(t.Failed() == false, duration, "Index status UI page - validates web UI shows API key status")
+	}()
 
 	// Start containers
 	require.NoError(t, env.StartIter(), "Failed to start iter")
@@ -958,11 +1109,4 @@ func TestIndexStatusUIPage(t *testing.T) {
 
 	t.Log("EXPECTED: Index status UI shows GOOGLE_GEMINI_API_KEY warning")
 	t.Log("Page contains API key status and project indexing information")
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

@@ -1,45 +1,61 @@
 // Package api contains integration tests for iter-service REST API.
+// Each test file builds the binary, starts the service, runs all tests, then cleans up.
 package api
 
 import (
 	"fmt"
 	"net/http"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/ternarybob/iter/tests/common"
 )
 
+// Shared test setup for all tests in this file
+var testSetup *common.TestSetup
+
+// TestMain runs once per test file: build, start service, run tests, cleanup.
+func TestMain(m *testing.M) {
+	testSetup = common.NewTestSetup()
+	code := testSetup.Run(m, "api", "api_test")
+	os.Exit(code)
+}
+
+// getEnv returns the shared test environment.
+// Individual tests use this instead of creating their own.
+func getEnv(t *testing.T) *common.TestEnv {
+	t.Helper()
+	env := testSetup.Env()
+	if env == nil {
+		t.Fatal("Test environment not initialized")
+	}
+	// Set the testing.T for this specific test
+	env.T = t
+	return env
+}
+
 // TestAPIProjectCRUD tests project create, read, update, delete operations.
 func TestAPIProjectCRUD(t *testing.T) {
-	env := common.NewTestEnv(t, "api", "project-crud")
-	defer env.Cleanup()
-
+	env := getEnv(t)
 	startTime := time.Now()
-
-	if err := env.Start(); err != nil {
-		t.Fatalf("Failed to start service: %v", err)
-	}
 
 	client := env.NewHTTPClient()
 
 	// Create a test project directory
-	projectPath, err := env.CreateTestProject("test-project")
+	projectPath, err := env.CreateTestProject("test-project-crud")
 	if err != nil {
 		t.Fatalf("Failed to create test project: %v", err)
 	}
 
-	// 1. List projects (should be empty)
+	// 1. List projects (should be empty initially or have prior test data)
 	resp, body, err := client.Get("/projects")
 	if err != nil {
 		t.Fatalf("List projects failed: %v", err)
 	}
 	common.AssertStatusCode(t, resp, http.StatusOK)
-	projects := common.AssertJSONArray(t, body)
-	if len(projects) != 0 {
-		t.Errorf("Expected 0 projects, got %d", len(projects))
-	}
-	env.SaveJSON("01-list-empty.json", projects)
+	initialProjects := common.AssertJSONArray(t, body)
+	env.SaveJSON("01-list-initial.json", initialProjects)
 
 	// 2. Register project
 	resp, body, err = client.Post("/projects", map[string]string{
@@ -70,17 +86,24 @@ func TestAPIProjectCRUD(t *testing.T) {
 	}
 	env.SaveJSON("03-get-project.json", project)
 
-	// 4. List projects (should have one)
+	// 4. List projects (should have the new one)
 	resp, body, err = client.Get("/projects")
 	if err != nil {
 		t.Fatalf("List projects failed: %v", err)
 	}
 	common.AssertStatusCode(t, resp, http.StatusOK)
-	projects = common.AssertJSONArray(t, body)
-	if len(projects) != 1 {
-		t.Errorf("Expected 1 project, got %d", len(projects))
+	projects := common.AssertJSONArray(t, body)
+	found := false
+	for _, p := range projects {
+		if p["id"] == projectID {
+			found = true
+			break
+		}
 	}
-	env.SaveJSON("04-list-one-project.json", projects)
+	if !found {
+		t.Error("Created project not found in list")
+	}
+	env.SaveJSON("04-list-with-project.json", projects)
 
 	// 5. Delete project
 	resp, _, err = client.Delete("/projects/" + projectID)
@@ -90,16 +113,11 @@ func TestAPIProjectCRUD(t *testing.T) {
 	common.AssertStatusCode(t, resp, http.StatusNoContent)
 
 	// 6. Verify deletion
-	resp, body, err = client.Get("/projects")
+	resp, _, err = client.Get("/projects/" + projectID)
 	if err != nil {
-		t.Fatalf("List projects failed: %v", err)
+		t.Fatalf("Get deleted project failed: %v", err)
 	}
-	common.AssertStatusCode(t, resp, http.StatusOK)
-	projects = common.AssertJSONArray(t, body)
-	if len(projects) != 0 {
-		t.Errorf("Expected 0 projects after deletion, got %d", len(projects))
-	}
-	env.SaveJSON("06-list-after-delete.json", projects)
+	common.AssertStatusCode(t, resp, http.StatusNotFound)
 
 	duration := time.Since(startTime)
 	env.WriteSummary(true, duration, "Project CRUD operations completed successfully")
@@ -107,14 +125,8 @@ func TestAPIProjectCRUD(t *testing.T) {
 
 // TestAPIProjectIndex tests project indexing operations.
 func TestAPIProjectIndex(t *testing.T) {
-	env := common.NewTestEnv(t, "api", "project-index")
-	defer env.Cleanup()
-
+	env := getEnv(t)
 	startTime := time.Now()
-
-	if err := env.Start(); err != nil {
-		t.Fatalf("Failed to start service: %v", err)
-	}
 
 	client := env.NewHTTPClient()
 
@@ -157,20 +169,17 @@ func TestAPIProjectIndex(t *testing.T) {
 
 	env.Log("Indexed %v documents from %v files", docCount, fileCount)
 
+	// Cleanup: delete the project
+	client.Delete("/projects/" + projectID)
+
 	duration := time.Since(startTime)
 	env.WriteSummary(true, duration, "Project indexing completed successfully")
 }
 
 // TestAPISearch tests the search functionality.
 func TestAPISearch(t *testing.T) {
-	env := common.NewTestEnv(t, "api", "search")
-	defer env.Cleanup()
-
+	env := getEnv(t)
 	startTime := time.Now()
-
-	if err := env.Start(); err != nil {
-		t.Fatalf("Failed to start service: %v", err)
-	}
 
 	client := env.NewHTTPClient()
 
@@ -243,25 +252,22 @@ func TestAPISearch(t *testing.T) {
 	searchResults = common.AssertJSON(t, body)
 	env.SaveJSON("03-search-functions.json", searchResults)
 
+	// Cleanup
+	client.Delete("/projects/" + projectID)
+
 	duration := time.Since(startTime)
 	env.WriteSummary(true, duration, "Search operations completed successfully")
 }
 
 // TestAPIErrorHandling tests API error responses.
 func TestAPIErrorHandling(t *testing.T) {
-	env := common.NewTestEnv(t, "api", "error-handling")
-	defer env.Cleanup()
-
+	env := getEnv(t)
 	startTime := time.Now()
-
-	if err := env.Start(); err != nil {
-		t.Fatalf("Failed to start service: %v", err)
-	}
 
 	client := env.NewHTTPClient()
 
 	// 1. Get non-existent project
-	resp, body, err := client.Get("/projects/nonexistent")
+	resp, body, err := client.Get("/projects/nonexistent-id-12345")
 	if err != nil {
 		t.Fatalf("Request failed: %v", err)
 	}
@@ -301,7 +307,7 @@ func TestAPIErrorHandling(t *testing.T) {
 	env.SaveJSON("03-register-empty-path.json", errorResp)
 
 	// 4. Delete non-existent project
-	resp, body, err = client.Delete("/projects/nonexistent")
+	resp, body, err = client.Delete("/projects/nonexistent-id-12345")
 	if err != nil {
 		t.Fatalf("Request failed: %v", err)
 	}
@@ -313,7 +319,7 @@ func TestAPIErrorHandling(t *testing.T) {
 	env.SaveJSON("04-delete-nonexistent.json", errorResp)
 
 	// 5. Search on non-existent project
-	resp, body, err = client.Post("/projects/nonexistent/search", map[string]interface{}{
+	resp, body, err = client.Post("/projects/nonexistent-id-12345/search", map[string]interface{}{
 		"query": "test",
 	})
 	if err != nil {
@@ -332,27 +338,19 @@ func TestAPIErrorHandling(t *testing.T) {
 
 // TestAPIMultipleProjects tests managing multiple projects.
 func TestAPIMultipleProjects(t *testing.T) {
-	env := common.NewTestEnv(t, "api", "multiple-projects")
-	defer env.Cleanup()
-
+	env := getEnv(t)
 	startTime := time.Now()
-
-	if err := env.Start(); err != nil {
-		t.Fatalf("Failed to start service: %v", err)
-	}
 
 	client := env.NewHTTPClient()
 
 	// Create multiple test projects
-	projectPaths := make([]string, 3)
 	projectIDs := make([]string, 3)
 
 	for i := 0; i < 3; i++ {
-		projectPath, err := env.CreateTestProject(fmt.Sprintf("project-%d", i))
+		projectPath, err := env.CreateTestProject(fmt.Sprintf("multi-project-%d", i))
 		if err != nil {
 			t.Fatalf("Failed to create test project %d: %v", i, err)
 		}
-		projectPaths[i] = projectPath
 
 		resp, body, err := client.Post("/projects", map[string]string{
 			"path": projectPath,
@@ -372,8 +370,19 @@ func TestAPIMultipleProjects(t *testing.T) {
 	}
 	common.AssertStatusCode(t, resp, http.StatusOK)
 	projects := common.AssertJSONArray(t, body)
-	if len(projects) != 3 {
-		t.Errorf("Expected 3 projects, got %d", len(projects))
+
+	// Check all our projects exist
+	for _, id := range projectIDs {
+		found := false
+		for _, p := range projects {
+			if p["id"] == id {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("Project %s not found in list", id)
+		}
 	}
 	env.SaveJSON("01-list-all-projects.json", projects)
 
@@ -393,17 +402,16 @@ func TestAPIMultipleProjects(t *testing.T) {
 	}
 	common.AssertStatusCode(t, resp, http.StatusNoContent)
 
-	// Verify remaining projects
-	resp, body, err = client.Get("/projects")
+	// Verify it's gone
+	resp, _, err = client.Get("/projects/" + projectIDs[1])
 	if err != nil {
-		t.Fatalf("List projects failed: %v", err)
+		t.Fatalf("Get deleted project failed: %v", err)
 	}
-	common.AssertStatusCode(t, resp, http.StatusOK)
-	projects = common.AssertJSONArray(t, body)
-	if len(projects) != 2 {
-		t.Errorf("Expected 2 projects after deletion, got %d", len(projects))
-	}
-	env.SaveJSON("02-list-after-delete.json", projects)
+	common.AssertStatusCode(t, resp, http.StatusNotFound)
+
+	// Cleanup remaining projects
+	client.Delete("/projects/" + projectIDs[0])
+	client.Delete("/projects/" + projectIDs[2])
 
 	duration := time.Since(startTime)
 	env.WriteSummary(true, duration, "Multiple projects management completed successfully")

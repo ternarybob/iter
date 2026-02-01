@@ -1,5 +1,8 @@
 // Package mcp contains validation tests for iter-service MCP with Claude CLI.
 // These tests verify Claude can connect to and use iter MCP tools.
+//
+// NOTE: These tests share TestMain with mcp_test.go (same package).
+// The service is already started when these tests run.
 package mcp
 
 import (
@@ -141,11 +144,18 @@ func saveTerminalScreenshot(env *common.TestEnv, name, title, command, output st
 	return nil
 }
 
+// checkClaudeAuth skips tests that require Claude authentication.
+func checkClaudeAuth(t *testing.T) {
+	t.Helper()
+	credPath := filepath.Join(os.Getenv("HOME"), ".claude", ".credentials.json")
+	if _, err := os.Stat(credPath); os.IsNotExist(err) {
+		t.Skip("Claude credentials not found - skipping authentication-dependent test")
+	}
+}
+
 // TestMCPValidation_Step1_ClaudeInstalled verifies Claude CLI is installed.
 func TestMCPValidation_Step1_ClaudeInstalled(t *testing.T) {
-	env := common.NewTestEnv(t, "mcp", "validation-step1-claude")
-	defer env.Cleanup()
-
+	env := getEnv(t)
 	startTime := time.Now()
 
 	// Check if claude is installed
@@ -179,17 +189,12 @@ func TestMCPValidation_Step1_ClaudeInstalled(t *testing.T) {
 }
 
 // TestMCPValidation_Step2_ServiceRunning verifies iter-service starts and MCP is accessible.
+// Note: Service is already started via TestMain, so we just verify it's running.
 func TestMCPValidation_Step2_ServiceRunning(t *testing.T) {
-	env := common.NewTestEnv(t, "mcp", "validation-step2-service")
-	defer env.Cleanup()
-
+	env := getEnv(t)
 	startTime := time.Now()
 
-	// Start service
-	if err := env.Start(); err != nil {
-		t.Fatalf("Failed to start iter-service: %v", err)
-	}
-
+	// Service is already started by TestMain - just verify health
 	// Test health endpoint
 	cmd := exec.Command("curl", "-s", env.BaseURL+"/health")
 	output, err := cmd.CombinedOutput()
@@ -255,15 +260,10 @@ func TestMCPValidation_Step2_ServiceRunning(t *testing.T) {
 func TestMCPValidation_Step3_AddMCPServer(t *testing.T) {
 	checkClaudeAuth(t)
 
-	env := common.NewTestEnv(t, "mcp", "validation-step3-add-server")
-	defer env.Cleanup()
-
+	env := getEnv(t)
 	startTime := time.Now()
 
-	// Start service
-	if err := env.Start(); err != nil {
-		t.Fatalf("Failed to start iter-service: %v", err)
-	}
+	// Service is already started by TestMain
 
 	// First, list existing MCP servers
 	cmd := exec.Command("claude", "mcp", "list")
@@ -326,15 +326,10 @@ func TestMCPValidation_Step3_AddMCPServer(t *testing.T) {
 func TestMCPValidation_Step4_BasicQuery(t *testing.T) {
 	checkClaudeAuth(t)
 
-	env := common.NewTestEnv(t, "mcp", "validation-step4-query")
-	defer env.Cleanup()
-
+	env := getEnv(t)
 	startTime := time.Now()
 
-	// Start service
-	if err := env.Start(); err != nil {
-		t.Fatalf("Failed to start iter-service: %v", err)
-	}
+	// Service is already started by TestMain
 
 	// Create and register a test project
 	client := env.NewHTTPClient()

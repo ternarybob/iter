@@ -1,5 +1,7 @@
-// Package mcp contains MCP integration tests using Docker common.
-// These tests build fresh images and run in isolated common.
+// Package mcp contains MCP integration tests using Docker containers.
+// These tests require Docker mode (TEST_DOCKER=1) and will skip in local mode.
+//
+// NOTE: These tests share TestMain with mcp_test.go (same package).
 package mcp
 
 import (
@@ -10,7 +12,9 @@ import (
 )
 
 // TestContainerMCP runs MCP tests in Docker containers with fresh images.
+// Requires Docker mode (TEST_DOCKER=1).
 func TestContainerMCP(t *testing.T) {
+	requireDockerMode(t)
 	if testing.Short() {
 		t.Skip("Skipping container tests in short mode")
 	}
@@ -20,8 +24,8 @@ func TestContainerMCP(t *testing.T) {
 		t.Fatalf("Failed to build images: %v", err)
 	}
 
-	// Create environment
-	env, err := common.NewEnv(t)
+	// Create environment with test name for per-test results directory
+	env, err := common.NewEnv(t, "TestContainerMCP")
 	if err != nil {
 		t.Fatalf("Failed to create env: %v", err)
 	}
@@ -121,7 +125,9 @@ func TestContainerMCP(t *testing.T) {
 }
 
 // TestContainerMCPClean runs MCP tests with completely fresh images.
+// Requires Docker mode (TEST_DOCKER=1).
 func TestContainerMCPClean(t *testing.T) {
+	requireDockerMode(t)
 	if testing.Short() {
 		t.Skip("Skipping container tests in short mode")
 	}
@@ -131,7 +137,7 @@ func TestContainerMCPClean(t *testing.T) {
 		t.Fatalf("Failed to build images: %v", err)
 	}
 
-	env, err := common.NewEnv(t)
+	env, err := common.NewEnv(t, "TestContainerMCPClean")
 	if err != nil {
 		t.Fatalf("Failed to create env: %v", err)
 	}

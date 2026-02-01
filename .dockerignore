@@ -3,9 +3,10 @@
 .gitignore
 
 # Build artifacts
-bin/
 *.exe
-iter-service
+
+# Ignore root iter-service but keep bin/iter-service for Docker
+/iter-service
 
 # Test results (may have permission issues)
 tests/results/

@@ -1,42 +1,47 @@
 # Dockerfile for iter-service server
-# Minimal image that runs the iter-service API and MCP endpoints
+# Uses pre-built binary from tests/bin/iter-service
+# This ensures the exact same binary is tested in Docker as locally
+#
+# Prerequisites:
+#   go build -o tests/bin/iter-service ./cmd/iter-service
+# Or:
+#   scripts/run-docker-tests.sh  (builds automatically)
 
-FROM golang:1.24-bookworm AS builder
-
-WORKDIR /build
-COPY go.mod go.sum ./
-RUN go mod download
-
-COPY . .
-RUN CGO_ENABLED=0 go build -o iter-service ./cmd/iter-service
-
-# Runtime image
 FROM debian:bookworm-slim
 
+# Install runtime dependencies only (no Go needed)
 RUN apt-get update && apt-get install -y \
     curl \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
+# Create a test user (simulates real user deployment)
+RUN useradd -m -s /bin/bash testuser
+USER testuser
+WORKDIR /home/testuser
 
-# Copy binary
-COPY --from=builder /build/iter-service /app/iter-service
+# Create standard directories (as install script would)
+RUN mkdir -p /home/testuser/.local/bin \
+    /home/testuser/.config/iter-service \
+    /home/testuser/.iter-service/logs
 
-# Copy config from repo (config.example.toml is the tracked reference)
-COPY configs/config.example.toml /app/config.toml
+# Copy pre-built binary from tests/bin/
+COPY --chown=testuser:testuser tests/bin/iter-service /home/testuser/.local/bin/iter-service
 
-# Create data directory
-RUN mkdir -p /app/data
+# Copy default config
+COPY --chown=testuser:testuser configs/config.example.toml /home/testuser/.config/iter-service/config.toml
 
-# Override config for container networking (bind to 0.0.0.0, use container paths)
-RUN sed -i 's/host = "127.0.0.1"/host = "0.0.0.0"/' /app/config.toml && \
-    sed -i 's/port = 8420/port = 19000/' /app/config.toml && \
-    sed -i 's/output = \["file"\]/output = ["stdout"]/' /app/config.toml && \
-    sed -i 's/level = "info"/level = "debug"/' /app/config.toml
+# Configure for container networking
+RUN sed -i 's/host = "127.0.0.1"/host = "0.0.0.0"/' /home/testuser/.config/iter-service/config.toml && \
+    sed -i 's/port = 8420/port = 19000/' /home/testuser/.config/iter-service/config.toml && \
+    sed -i 's/output = \["file"\]/output = ["stdout"]/' /home/testuser/.config/iter-service/config.toml && \
+    sed -i 's/level = "info"/level = "debug"/' /home/testuser/.config/iter-service/config.toml
+
+# Set PATH
+ENV PATH="/home/testuser/.local/bin:${PATH}"
 
 # Expose port
 EXPOSE 19000
 
-# Run service
-CMD ["/app/iter-service", "--config", "/app/config.toml"]
+# Run the service
+CMD ["iter-service", "serve", "--config", "/home/testuser/.config/iter-service/config.toml"]

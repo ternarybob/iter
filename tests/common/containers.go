@@ -96,14 +96,24 @@ type Env struct {
 
 // NewEnv creates a new container test environment.
 // Call BuildImages() first if you want to ensure fresh images.
-func NewEnv(t *testing.T) (*Env, error) {
+// testName is used for per-test result directories.
+func NewEnv(t *testing.T, testName ...string) (*Env, error) {
 	t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 
-	// Create results directory
+	// Create results directory: tests/results/containers/{testName}/
+	// Per-test directories - each run overwrites previous results
 	root := getProjectRoot()
-	resultsDir := filepath.Join(root, "tests", "results", "containers", time.Now().Format("2006-01-02_15-04-05"))
+	name := "default"
+	if len(testName) > 0 && testName[0] != "" {
+		name = testName[0]
+	}
+	resultsDir := filepath.Join(root, "tests", "results", "containers", name)
+
+	// Remove old results to ensure clean state
+	os.RemoveAll(resultsDir)
+
 	if err := os.MkdirAll(resultsDir, 0755); err != nil {
 		cancel()
 		return nil, fmt.Errorf("create results dir: %w", err)

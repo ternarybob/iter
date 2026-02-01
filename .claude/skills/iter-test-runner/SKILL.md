@@ -1,6 +1,6 @@
 # iter-test-runner
 
-Run iter-service tests, capture screenshots, analyze failures, fix code, and iterate until tests pass.
+Run iter-service tests with MANDATORY screenshot capture, log collection, and summary output.
 
 ## Usage
 
@@ -11,77 +11,125 @@ Run iter-service tests, capture screenshots, analyze failures, fix code, and ite
 ## Examples
 
 ```
-/iter-test-runner TestServiceStartStop
-/iter-test-runner TestAPI
+/iter-test-runner TestProjectIsolation
+/iter-test-runner TestIndexStatus
 /iter-test-runner --all
 ```
 
-## Description
+## CRITICAL REQUIREMENTS (ENFORCE OR FAIL)
 
-This skill runs iter-service integration tests and automatically fixes code issues to make tests pass.
+These are NOT optional. If a test does not meet these requirements, the skill MUST FAIL and report the deficiency. The skill CANNOT modify test files to fix these issues.
 
-**CRITICAL RULES:**
-1. **ALWAYS use Docker** - Tests run in isolated containers
-2. **NEVER modify test files** - Tests are the source of truth
-3. **Fix only implementation code** - Modify files in `cmd/`, `internal/`, `pkg/`, `web/`
-4. **UI tests MUST capture screenshots** - Tests use chromedp to capture PNG screenshots
-5. **Each test has its own results directory** - Enforce structure below
-6. **STOP conditions:**
-   - Test structure is invalid (syntax errors, missing imports)
-   - Test requirement is impossible
-   - Maximum 5 iterations reached without progress
+### 1. Screenshots are MANDATORY for ALL Tests
 
-## Results Directory Structure (MANDATORY)
+**EVERY test** must capture before/after screenshots to prove execution:
 
-Each test MUST have its own results directory:
+| Screenshot | When | Purpose |
+|------------|------|---------|
+| `01-before.png` | Before any test actions | Prove initial state |
+| `02-after.png` | After test completes | Prove final state |
+
+**Enforcement:** After test run, verify screenshots exist. If missing:
+```
+FAIL: Test {TestName} missing required screenshots
+  - Expected: 01-before.png, 02-after.png
+  - Found: {list actual files}
+
+ACTION REQUIRED: Test must be updated to capture screenshots.
+This skill cannot modify test files.
+```
+
+### 2. Log Collection is MANDATORY
+
+Every test results directory MUST contain:
+
+| File | Source | Content |
+|------|--------|---------|
+| `test-output.log` | Go test stdout/stderr | Test execution output |
+| `iter-service.log` | iter-service container | Service logs |
+| `container.log` | Docker container logs | Container runtime logs |
+| `summary.json` | Test framework | Structured test results |
+| `SUMMARY.md` | Test framework | Human-readable summary |
+
+**Enforcement:** After test run, verify all logs exist. If missing, FAIL.
+
+### 3. Summary Output is MANDATORY
+
+Every test MUST produce:
+
+**summary.json:**
+```json
+{
+  "test_name": "TestProjectIsolation",
+  "passed": true,
+  "duration": "20.5s",
+  "timestamp": "2026-02-01T14:00:23Z",
+  "screenshots": ["01-before.png", "02-after.png"],
+  "logs": ["test-output.log", "iter-service.log", "container.log"],
+  "details": "MCP returns project-specific data correctly",
+  "errors": []
+}
+```
+
+**SUMMARY.md:**
+```markdown
+# Test: TestProjectIsolation
+
+**Result:** PASS
+**Duration:** 20.5s
+**Timestamp:** 2026-02-01T14:00:23Z
+
+## Screenshots
+- 01-before.png - Initial state
+- 02-after.png - Final state
+
+## Logs
+- test-output.log
+- iter-service.log
+- container.log
+
+## Details
+MCP returns project-specific data correctly.
+
+## Errors
+None
+```
+
+### 4. Results Directory Structure (Per-Test, NOT Per-Run)
+
+Results are organized BY TEST NAME, not by timestamp:
 
 ```
 tests/results/
-├── service/
-│   └── {datetime}-{testname}/
-│       ├── SUMMARY.md
-│       ├── test-output.log
-│       └── summary.json
 ├── api/
-│   └── {datetime}-{testname}/
-│       ├── SUMMARY.md
-│       ├── test-output.log
-│       └── summary.json
+│   ├── TestIndexStatusAPIWithoutProjects/
+│   │   ├── SUMMARY.md
+│   │   ├── summary.json
+│   │   ├── test-output.log
+│   │   ├── iter-service.log
+│   │   ├── 01-before.png
+│   │   └── 02-after.png
+│   └── TestIndexStatusAPIWithProjects/
+│       └── ...
+├── mcp/
+│   ├── TestProjectIsolation/
+│   │   ├── SUMMARY.md
+│   │   ├── summary.json
+│   │   ├── test-output.log
+│   │   ├── iter-service.log
+│   │   ├── container.log
+│   │   ├── 01-before.png
+│   │   └── 02-after.png
+│   └── TestIndexStatusWithoutGeminiAPIKey/
+│       └── ...
 └── ui/
-    └── {datetime}-{testname}/
-        ├── SUMMARY.md
-        ├── test-output.log
-        ├── summary.json
-        ├── 01-before.png           # REQUIRED: Before state
-        └── 02-after.png            # REQUIRED: After state
+    ├── TestIndexStatusUIWithoutProjects/
+    │   └── ...
+    └── TestIndexStatusUIWithProjects/
+        └── ...
 ```
 
-**Directory naming:** `{YYYY-MM-DD_HH-MM-SS}-{testname}`
-- Example: `2026-01-31_15-30-00-home-page`
-
-## UI Screenshot Template (MANDATORY)
-
-Every UI test MUST capture before/after PNG screenshots using chromedp:
-
-| Screenshot | Description |
-|------------|-------------|
-| `01-before.png` | Initial state before test actions |
-| `02-after.png` | Final state after test actions |
-
-Some tests may have additional screenshots (e.g., `02-settings.png`, `03-docs.png`) but ALL UI tests MUST have at least `01-before.png` and a final screenshot.
-
-### Test-Specific Screenshot Requirements
-
-| Test | Required Screenshots |
-|------|---------------------|
-| TestUIHomePage | `01-before.png`, `02-after.png` |
-| TestUIStyles | `01-before.png`, `02-after.png` |
-| TestUIProjectList | `01-before.png`, `02-after.png` |
-| TestUIProjectPage | `01-before.png`, `02-after.png` |
-| TestUIDocsPage | `01-before.png`, `02-after.png` |
-| TestUISettingsPage | `01-before.png`, `02-after.png` |
-| TestUINavigation | `01-before.png`, `02-settings.png`, `03-docs.png`, `04-after.png` |
-| TestUISearchResults | `01-before.png`, `02-after.png` |
+**Key:** Each test run OVERWRITES the previous results for that test. This ensures you always see the latest results for each test.
 
 ## Workflow
 
@@ -90,140 +138,146 @@ Some tests may have additional screenshots (e.g., `02-settings.png`, `03-docs.pn
 ```bash
 go build ./tests/...
 ```
-If invalid, STOP and report: "Test structure invalid: {reason}"
 
-### Step 2: Run Tests in Docker
+If build fails, STOP and report: "Test structure invalid: {reason}"
+
+### Step 2: Run Tests
 
 ```bash
-cd /home/bobmc/development/iter
-./tests/run-tests.sh --all
+go test -v ./tests/{suite}/... -run {pattern} -timeout 300s 2>&1 | tee test-output.log
 ```
 
-**Note:** UI tests use chromedp to capture screenshots automatically. Chrome/Chromium must be available in the Docker container.
+### Step 3: Verify MANDATORY Outputs
 
-### Step 3: Verify UI Screenshots Exist
-
-After tests complete, verify each UI test directory contains the required PNG screenshots:
+After each test completes, verify:
 
 ```bash
-# Check for required screenshots
-for dir in tests/results/ui/*/; do
-    if [[ ! -f "$dir/01-before.png" ]]; then
-        echo "FAIL: Missing 01-before.png in $dir"
-    fi
-    # Check for at least one "after" screenshot
-    if ! ls "$dir"/*-after.png &>/dev/null && ! ls "$dir"/02-*.png &>/dev/null; then
-        echo "FAIL: Missing after screenshot in $dir"
+# For each test results directory:
+REQUIRED_FILES=(
+    "SUMMARY.md"
+    "summary.json"
+    "test-output.log"
+    "01-before.png"
+    "02-after.png"
+)
+
+for file in "${REQUIRED_FILES[@]}"; do
+    if [[ ! -f "$RESULTS_DIR/$file" ]]; then
+        echo "FAIL: Missing required file: $file"
+        MISSING_FILES+=("$file")
     fi
 done
+
+if [[ ${#MISSING_FILES[@]} -gt 0 ]]; then
+    echo ""
+    echo "TEST INFRASTRUCTURE FAILURE"
+    echo "The test does not meet mandatory requirements."
+    echo "Missing: ${MISSING_FILES[*]}"
+    echo ""
+    echo "ACTION REQUIRED: Update the test to capture screenshots and generate summaries."
+    echo "This skill CANNOT modify test files."
+    exit 1
+fi
 ```
 
-If screenshots are missing, the test has FAILED even if the Go test passed.
+### Step 4: Generate Final Report
 
-### Step 4: Analyze Results
+Output MUST include:
 
-Read `SUMMARY.md` from the results directory:
-- `--- PASS`: Test passed (verify screenshots exist for UI tests)
-- `--- FAIL`: Extract failure reason, proceed to fix
+```markdown
+## iter-test-runner Results
 
-**For UI tests:** A test is ONLY considered passing if:
-1. The Go test passed
-2. All required PNG screenshots exist in the results directory
+**Test:** {TestName}
+**Result:** PASS | FAIL | INFRASTRUCTURE_FAILURE
+**Duration:** {duration}
+**Iterations:** {count}
 
-### Step 5: Apply Fix (if tests failed)
+### Artifacts Verified
 
-1. Read error message from test-output.log
-2. Identify root cause
-3. Locate source file causing the issue
-4. Apply minimal fix
-5. **DO NOT modify test files** (tests/*.go)
-6. Re-run tests
+| File | Status |
+|------|--------|
+| SUMMARY.md | OK |
+| summary.json | OK |
+| test-output.log | OK |
+| iter-service.log | OK |
+| 01-before.png | OK |
+| 02-after.png | OK |
 
-### Step 6: Iterate or Stop
+### Results Directory
+`tests/results/{suite}/{TestName}/`
 
-- If test passes AND screenshots exist: Report success, DONE
-- If 5 iterations reached: Report failure, STOP
-- If same error repeats 3 times: STOP with "Unable to fix: {reason}"
-- Otherwise: Go to Step 2
+### Summary
+{Contents of SUMMARY.md}
 
-## Output
+### Fixes Applied (if any)
+1. {fix description}
+2. {fix description}
 
-Final output includes:
-1. Test result (PASS/FAIL/STOP)
-2. Number of iterations
-3. Summary of fixes applied
-4. Path to results directory
-5. **Screenshot verification** (for UI tests)
-
-Example output:
-```
-## Test Results
-
-**Result: PASS**
-**Iterations:** 1
-
-### UI Test Screenshots Verified
-
-| Test | Before | After | Status |
-|------|--------|-------|--------|
-| TestUIHomePage | 01-before.png | 02-after.png | OK |
-| TestUIProjectList | 01-before.png | 02-after.png | OK |
-...
-
-### Results Directories
-- tests/results/ui/2026-01-31_16-07-38-homepage/
-- tests/results/ui/2026-01-31_16-07-38-projectlist/
-...
+### Recommendations
+- {recommendation if test failed}
 ```
 
-## Test Suites
+## STOP Conditions
 
-| Suite | Location | Screenshots Required |
-|-------|----------|---------------------|
-| service | `tests/service/` | No |
-| api | `tests/api/` | No |
-| ui | `tests/ui/` | **YES - chromedp captures before/after PNGs** |
+STOP immediately and report INFRASTRUCTURE_FAILURE if:
 
-## UI Test Implementation
+1. **Screenshots missing** - Test did not capture before/after screenshots
+2. **Summary missing** - Test did not generate SUMMARY.md or summary.json
+3. **Logs missing** - Test did not collect required logs
+4. Test file has syntax errors
+5. Maximum 5 iterations reached without progress
+6. Same error repeats 3 times
 
-UI tests use chromedp (Go Chrome DevTools Protocol library) to capture real browser screenshots:
+**Important:** For infrastructure failures (missing screenshots, summaries, logs), the skill CANNOT fix the problem because it cannot modify test files. It must STOP and report what is missing.
+
+## Test Implementation Requirements
+
+For a test to be compatible with this runner, it MUST:
 
 ```go
-// Example from ui_test.go
-browser, err := env.NewBrowser()
-if err != nil {
-    t.Fatalf("Failed to create browser: %v", err)
+func TestExample(t *testing.T) {
+    // 1. Create test environment with proper results directory
+    env := common.NewTestEnv(t, "mcp", "example")
+    defer env.Cleanup()
+
+    startTime := time.Now()
+
+    // 2. Start service
+    if err := env.Start(); err != nil {
+        t.Fatalf("Failed to start: %v", err)
+    }
+
+    // 3. Create browser for screenshots
+    browser, err := env.NewBrowser()
+    if err != nil {
+        t.Fatalf("Failed to create browser: %v", err)
+    }
+    defer browser.Close()
+
+    // 4. MANDATORY: Capture before screenshot
+    if err := browser.NavigateAndScreenshot("/", "01-before"); err != nil {
+        t.Fatalf("Failed to capture before screenshot: %v", err)
+    }
+
+    // 5. Perform test actions
+    // ...
+
+    // 6. MANDATORY: Capture after screenshot
+    if err := browser.FullPageScreenshot("02-after"); err != nil {
+        t.Fatalf("Failed to capture after screenshot: %v", err)
+    }
+
+    // 7. MANDATORY: Verify screenshots exist
+    env.RequireScreenshots([]string{"01-before", "02-after"})
+
+    // 8. MANDATORY: Write summary
+    duration := time.Since(startTime)
+    env.WriteSummary(true, duration, "Test completed successfully")
 }
-defer browser.Close()
-
-// Capture before screenshot
-if err := browser.NavigateAndScreenshot("/web/", "01-before"); err != nil {
-    t.Fatalf("Failed to capture before screenshot: %v", err)
-}
-
-// ... perform test actions ...
-
-// Capture after screenshot
-if err := browser.FullPageScreenshot("02-after"); err != nil {
-    t.Fatalf("Failed to capture after screenshot: %v", err)
-}
-
-// Verify screenshots exist (test will fail if missing)
-env.RequireScreenshots([]string{"01-before", "02-after"})
 ```
-
-## Stop Conditions
-
-STOP immediately and report if:
-1. Test file has syntax errors
-2. Test expects behavior that contradicts architecture
-3. Same fix fails 3 times
-4. 5 iterations without progress
-5. **UI test missing PNG screenshots** - Screenshots are mandatory
 
 ## Docker Requirements
 
-- Fresh container built each run (--no-cache)
-- **Chromium/Chrome must be installed** for UI tests
-- Tests run sequentially (-p 1)
-- Results captured from stdout/stderr
+- Chromium/Chrome must be installed for screenshot capture
+- Container logs must be accessible
+- Service logs must be written to results directory

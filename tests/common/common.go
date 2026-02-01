@@ -80,18 +80,25 @@ func getProjectRoot() string {
 
 // NewTestEnv creates a new isolated test environment.
 // The environment includes its own data directory, config file, and port.
-// testType should be "api", "service", or "ui".
-// testName is the specific test name (e.g., "project-crud").
+// testType should be "api", "mcp", or "ui".
+// testName is the specific test name (e.g., "TestProjectIsolation").
+//
+// Results are stored per-test: ./tests/results/{type}/{testName}/
+// Each run OVERWRITES previous results for the same test.
 //
 // If ITER_BASE_URL environment variable is set, the test will use an external
 // service instead of starting its own. This is useful for Docker-based testing.
 func NewTestEnv(t *testing.T, testType, testName string) *TestEnv {
 	t.Helper()
 
-	// Create results directory: ./tests/results/{type}/{datetime}-{testname}/
+	// Create results directory: ./tests/results/{type}/{testName}/
+	// Per-test directories - each run overwrites previous results
 	root := getProjectRoot()
-	timestamp := time.Now().Format("2006-01-02_15-04-05")
-	resultsDir := filepath.Join(root, "tests", "results", testType, fmt.Sprintf("%s-%s", timestamp, testName))
+	resultsDir := filepath.Join(root, "tests", "results", testType, testName)
+
+	// Remove old results to ensure clean state
+	os.RemoveAll(resultsDir)
+
 	if err := os.MkdirAll(resultsDir, 0755); err != nil {
 		t.Fatalf("Failed to create results directory: %v", err)
 	}
@@ -315,8 +322,12 @@ func (e *TestEnv) Log(format string, args ...interface{}) {
 		f.Close()
 	}
 
-	// Also log to test
-	e.T.Log(strings.TrimSpace(msg))
+	// Also log to test (if T is available - may be nil during TestMain)
+	if e.T != nil {
+		e.T.Log(strings.TrimSpace(msg))
+	} else {
+		fmt.Print(msg) // Fall back to stdout during TestMain
+	}
 }
 
 // SaveResult saves a test result to the results directory.
@@ -339,33 +350,141 @@ func (e *TestEnv) SaveScreenshot(name string, html []byte) error {
 	return e.SaveResult(name+".html", html)
 }
 
-// WriteSummary writes a test summary to the results directory.
-func (e *TestEnv) WriteSummary(passed bool, duration time.Duration, details string) error {
-	summary := map[string]interface{}{
-		"test_name": e.Name,
-		"passed":    passed,
-		"duration":  duration.String(),
-		"timestamp": time.Now().Format(time.RFC3339),
-		"port":      e.Port,
-		"data_dir":  e.DataDir,
-		"details":   details,
+// TestSummary contains the structured test results.
+type TestSummary struct {
+	TestName    string   `json:"test_name"`
+	Passed      bool     `json:"passed"`
+	Duration    string   `json:"duration"`
+	Timestamp   string   `json:"timestamp"`
+	Screenshots []string `json:"screenshots"`
+	Logs        []string `json:"logs"`
+	Details     string   `json:"details"`
+	Errors      []string `json:"errors"`
+}
+
+// WriteSummary writes test summary to both summary.json and SUMMARY.md.
+// This is MANDATORY for all tests per iter-test-runner requirements.
+func (e *TestEnv) WriteSummary(passed bool, duration time.Duration, details string, errors ...string) error {
+	timestamp := time.Now().Format(time.RFC3339)
+
+	// Collect screenshots
+	screenshots := e.collectScreenshots()
+
+	// Collect logs
+	logs := e.collectLogs()
+
+	summary := TestSummary{
+		TestName:    e.Name,
+		Passed:      passed,
+		Duration:    duration.String(),
+		Timestamp:   timestamp,
+		Screenshots: screenshots,
+		Logs:        logs,
+		Details:     details,
+		Errors:      errors,
 	}
-	return e.SaveJSON("summary.json", summary)
+
+	// Write summary.json
+	if err := e.SaveJSON("summary.json", summary); err != nil {
+		return fmt.Errorf("write summary.json: %w", err)
+	}
+
+	// Write SUMMARY.md
+	return e.writeSummaryMarkdown(summary)
+}
+
+// collectScreenshots returns list of screenshot files in results directory.
+func (e *TestEnv) collectScreenshots() []string {
+	var screenshots []string
+	entries, err := os.ReadDir(e.ResultsDir)
+	if err != nil {
+		return screenshots
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".png") {
+			screenshots = append(screenshots, entry.Name())
+		}
+	}
+	return screenshots
+}
+
+// collectLogs returns list of log files in results directory.
+func (e *TestEnv) collectLogs() []string {
+	var logs []string
+	entries, err := os.ReadDir(e.ResultsDir)
+	if err != nil {
+		return logs
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".log") {
+			logs = append(logs, entry.Name())
+		}
+	}
+	return logs
+}
+
+// writeSummaryMarkdown writes the SUMMARY.md file.
+func (e *TestEnv) writeSummaryMarkdown(summary TestSummary) error {
+	result := "PASS"
+	if !summary.Passed {
+		result = "FAIL"
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("# Test: %s\n\n", summary.TestName))
+	sb.WriteString(fmt.Sprintf("**Result:** %s\n", result))
+	sb.WriteString(fmt.Sprintf("**Duration:** %s\n", summary.Duration))
+	sb.WriteString(fmt.Sprintf("**Timestamp:** %s\n\n", summary.Timestamp))
+
+	sb.WriteString("## Screenshots\n")
+	if len(summary.Screenshots) == 0 {
+		sb.WriteString("- None captured\n")
+	} else {
+		for _, s := range summary.Screenshots {
+			sb.WriteString(fmt.Sprintf("- %s\n", s))
+		}
+	}
+	sb.WriteString("\n")
+
+	sb.WriteString("## Logs\n")
+	if len(summary.Logs) == 0 {
+		sb.WriteString("- None captured\n")
+	} else {
+		for _, l := range summary.Logs {
+			sb.WriteString(fmt.Sprintf("- %s\n", l))
+		}
+	}
+	sb.WriteString("\n")
+
+	sb.WriteString("## Details\n")
+	sb.WriteString(summary.Details)
+	sb.WriteString("\n\n")
+
+	sb.WriteString("## Errors\n")
+	if len(summary.Errors) == 0 {
+		sb.WriteString("None\n")
+	} else {
+		for _, err := range summary.Errors {
+			sb.WriteString(fmt.Sprintf("- %s\n", err))
+		}
+	}
+
+	return e.SaveResult("SUMMARY.md", []byte(sb.String()))
 }
 
 // findBinary locates the iter-service binary.
 func findBinary() string {
 	root := getProjectRoot()
 
-	// Try bin/ directory first (preferred location)
+	// Try tests/bin/ first (test binaries location)
 	paths := []string{
-		filepath.Join(root, "bin", "iter-service"),
-		"./bin/iter-service",
-		"../bin/iter-service",
-		"../../bin/iter-service",
+		filepath.Join(root, "tests", "bin", "iter-service"),
+		"./tests/bin/iter-service",
+		"../tests/bin/iter-service",
+		"../../tests/bin/iter-service",
 	}
 
-	// Also try to find in PATH
+	// Also try to find in PATH (for installed binary)
 	if path, err := exec.LookPath("iter-service"); err == nil {
 		paths = append([]string{path}, paths...)
 	}

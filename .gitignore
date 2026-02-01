@@ -42,8 +42,9 @@ iter-service
 .claude/workdirtest/results/
 test/docker/.env
 
-# Test results
-tests/results
+# Test results and binaries
+tests/results/
+tests/bin/
 
 # Local config (use config.example.toml as reference)
 configs/config.toml

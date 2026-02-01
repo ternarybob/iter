@@ -8,9 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -67,16 +64,9 @@ func sendMCPRequest(baseURL string, req *MCPRequest) (*MCPResponse, error) {
 }
 
 // TestMCPProtocolInitialize tests the MCP initialize handshake.
-// This is step 1: verify basic MCP protocol works via HTTP.
 func TestMCPProtocolInitialize(t *testing.T) {
-	env := common.NewTestEnv(t, "api", "mcp-initialize")
-	defer env.Cleanup()
-
+	env := getEnv(t)
 	startTime := time.Now()
-
-	if err := env.Start(); err != nil {
-		t.Fatalf("Failed to start service: %v", err)
-	}
 
 	// Test initialize
 	resp, err := sendMCPRequest(env.BaseURL, &MCPRequest{
@@ -120,16 +110,9 @@ func TestMCPProtocolInitialize(t *testing.T) {
 }
 
 // TestMCPProtocolToolsList tests listing available MCP tools.
-// This is step 2: verify tools/list returns expected tools.
 func TestMCPProtocolToolsList(t *testing.T) {
-	env := common.NewTestEnv(t, "api", "mcp-tools-list")
-	defer env.Cleanup()
-
+	env := getEnv(t)
 	startTime := time.Now()
-
-	if err := env.Start(); err != nil {
-		t.Fatalf("Failed to start service: %v", err)
-	}
 
 	// First initialize
 	_, err := sendMCPRequest(env.BaseURL, &MCPRequest{
@@ -188,16 +171,9 @@ func TestMCPProtocolToolsList(t *testing.T) {
 }
 
 // TestMCPProtocolToolsCall tests calling MCP tools.
-// This is step 3: verify tools can be called and return valid results.
 func TestMCPProtocolToolsCall(t *testing.T) {
-	env := common.NewTestEnv(t, "api", "mcp-tools-call")
-	defer env.Cleanup()
-
+	env := getEnv(t)
 	startTime := time.Now()
-
-	if err := env.Start(); err != nil {
-		t.Fatalf("Failed to start service: %v", err)
-	}
 
 	client := env.NewHTTPClient()
 
@@ -262,7 +238,9 @@ func TestMCPProtocolToolsCall(t *testing.T) {
 	}
 
 	env.SaveJSON("01-list-projects-result.json", toolResult)
-	env.Log("list_projects returned: %s", toolResult.Content[0].Text[:min(100, len(toolResult.Content[0].Text))])
+	if len(toolResult.Content) > 0 {
+		env.Log("list_projects returned: %s", toolResult.Content[0].Text[:min(100, len(toolResult.Content[0].Text))])
+	}
 
 	// Test search tool
 	mcpResp, err = sendMCPRequest(env.BaseURL, &MCPRequest{
@@ -294,21 +272,17 @@ func TestMCPProtocolToolsCall(t *testing.T) {
 		env.Log("search returned: %s", toolResult.Content[0].Text[:min(100, len(toolResult.Content[0].Text))])
 	}
 
+	// Cleanup
+	client.Delete("/projects/" + projectID)
+
 	duration := time.Since(startTime)
 	env.WriteSummary(true, duration, "MCP tools/call protocol test passed")
 }
 
 // TestMCPSSEEndpoint tests the SSE endpoint for MCP.
-// This verifies the endpoint event is sent correctly.
 func TestMCPSSEEndpoint(t *testing.T) {
-	env := common.NewTestEnv(t, "api", "mcp-sse")
-	defer env.Cleanup()
-
+	env := getEnv(t)
 	startTime := time.Now()
-
-	if err := env.Start(); err != nil {
-		t.Fatalf("Failed to start service: %v", err)
-	}
 
 	// Make GET request to SSE endpoint
 	client := &http.Client{Timeout: 5 * time.Second}
@@ -342,125 +316,6 @@ func TestMCPSSEEndpoint(t *testing.T) {
 
 	duration := time.Since(startTime)
 	env.WriteSummary(true, duration, "MCP SSE endpoint test passed")
-}
-
-// TestMCPWithClaudeCLI tests MCP integration with Claude CLI.
-// This test is skipped in API tests - use tests/mcp for Claude CLI integration.
-// The API tests verify the MCP protocol works; Claude CLI tests are separate.
-func TestMCPWithClaudeCLI(t *testing.T) {
-	t.Skip("Claude CLI integration tests are in tests/mcp/ - API tests verify protocol only")
-	// Check if Claude CLI is available
-	if _, err := exec.LookPath("claude"); err != nil {
-		t.Skip("Claude CLI not installed, skipping integration test")
-	}
-
-	// Check for authentication
-	claudeDir := os.Getenv("HOME") + "/.claude"
-	claudeJSON := os.Getenv("HOME") + "/.claude.json"
-	hasAuth := false
-	if _, err := os.Stat(claudeDir); err == nil {
-		hasAuth = true
-	}
-	if _, err := os.Stat(claudeJSON); err == nil {
-		hasAuth = true
-	}
-	if os.Getenv("ANTHROPIC_API_KEY") != "" {
-		hasAuth = true
-	}
-	if !hasAuth {
-		t.Skip("No Claude authentication found, skipping integration test")
-	}
-
-	env := common.NewTestEnv(t, "api", "mcp-claude-cli")
-	defer env.Cleanup()
-
-	startTime := time.Now()
-
-	if err := env.Start(); err != nil {
-		t.Fatalf("Failed to start service: %v", err)
-	}
-
-	client := env.NewHTTPClient()
-
-	// Create and register a test project
-	projectPath, err := env.CreateTestProject("claude-mcp-test")
-	if err != nil {
-		t.Fatalf("Failed to create test project: %v", err)
-	}
-
-	resp, _, err := client.Post("/projects", map[string]string{"path": projectPath})
-	if err != nil {
-		t.Fatalf("Failed to register project: %v", err)
-	}
-	common.AssertStatusCode(t, resp, http.StatusCreated)
-
-	// Wait for indexing
-	time.Sleep(2 * time.Second)
-
-	// Create MCP config file
-	mcpConfig := map[string]interface{}{
-		"mcpServers": map[string]interface{}{
-			"iter": map[string]interface{}{
-				"transport": "http",
-				"url":       env.BaseURL + "/mcp/v1",
-			},
-		},
-	}
-	mcpConfigJSON, _ := json.Marshal(mcpConfig)
-	mcpConfigPath := filepath.Join(env.ResultsDir, "mcp-config.json")
-	if err := os.WriteFile(mcpConfigPath, mcpConfigJSON, 0644); err != nil {
-		t.Fatalf("Failed to write MCP config: %v", err)
-	}
-
-	env.SaveResult("mcp-config.json", mcpConfigJSON)
-
-	// Run Claude with MCP config
-	cmd := exec.Command("claude",
-		"-p",
-		"--dangerously-skip-permissions",
-		"--mcp-config", mcpConfigPath,
-		"--max-turns", "5",
-		"--output-format", "json",
-		"Use the iter MCP tools to list all projects. Just respond with the project names.",
-	)
-
-	output, err := cmd.CombinedOutput()
-	outputStr := string(output)
-
-	env.SaveResult("claude-output.json", output)
-	env.Log("Claude output: %s", outputStr)
-
-	if err != nil {
-		// Log the error but don't fail immediately - check if we got any useful output
-		env.Log("Claude command error: %v", err)
-	}
-
-	// Parse JSON output if possible
-	if strings.TrimSpace(outputStr) != "" {
-		var claudeResult map[string]interface{}
-		if err := json.Unmarshal(output, &claudeResult); err == nil {
-			if result, ok := claudeResult["result"].(string); ok && result != "" {
-				env.Log("Claude result: %s", result)
-				// Test passed if we got any result
-				duration := time.Since(startTime)
-				env.WriteSummary(true, duration, "MCP Claude CLI integration test passed")
-				return
-			}
-			if isError, ok := claudeResult["is_error"].(bool); ok && isError {
-				if errors, ok := claudeResult["errors"].([]interface{}); ok && len(errors) > 0 {
-					t.Fatalf("Claude returned errors: %v", errors)
-				}
-			}
-		}
-	}
-
-	// If we get here with empty output, the test failed
-	if strings.TrimSpace(outputStr) == "" {
-		t.Fatal("Claude returned empty output - MCP integration not working")
-	}
-
-	duration := time.Since(startTime)
-	env.WriteSummary(true, duration, "MCP Claude CLI integration test completed")
 }
 
 func min(a, b int) int {

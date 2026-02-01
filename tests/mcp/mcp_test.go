@@ -1,12 +1,19 @@
-// Package mcp contains integration tests for iter-service MCP functionality.
-// These tests use Claude Code CLI to verify MCP tool integration.
+// Package mcp contains MCP integration tests for iter-service.
+// Tests run against local service by default, or Docker with TEST_DOCKER=1.
+//
+// Usage:
+//
+//	go test -v ./tests/mcp/...           # Local mode
+//	TEST_DOCKER=1 go test -v ./tests/mcp/...  # Docker mode
 package mcp
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -14,437 +21,410 @@ import (
 	"github.com/ternarybob/iter/tests/common"
 )
 
-// checkClaudeAuth verifies Claude CLI is installed and authenticated.
-func checkClaudeAuth(t *testing.T) {
-	t.Helper()
+// Shared test setup for all tests in this file
+var testSetup *common.TestSetup
 
-	// Check Claude is installed
-	if _, err := exec.LookPath("claude"); err != nil {
-		t.Skip("Claude CLI not installed, skipping MCP tests")
-	}
+// TestMain runs once per test file: build, start service, run tests, cleanup.
+func TestMain(m *testing.M) {
+	// Check if Docker mode is requested
+	useDocker := os.Getenv("TEST_DOCKER") == "1"
 
-	// Check for authentication
-	claudeDir := os.Getenv("HOME") + "/.claude"
-	claudeJSON := os.Getenv("HOME") + "/.claude.json"
-
-	hasAuth := false
-	if _, err := os.Stat(claudeDir); err == nil {
-		hasAuth = true
-	}
-	if _, err := os.Stat(claudeJSON); err == nil {
-		hasAuth = true
-	}
-	if os.Getenv("ANTHROPIC_API_KEY") != "" {
-		hasAuth = true
+	if useDocker {
+		testSetup = common.NewDockerTestSetup()
+	} else {
+		testSetup = common.NewTestSetup()
 	}
 
-	if !hasAuth {
-		t.Skip("No Claude authentication found, skipping MCP tests")
-	}
+	code := testSetup.Run(m, "mcp", "mcp_test")
+	os.Exit(code)
 }
 
-// runClaude executes a Claude CLI command and returns the output.
-func runClaude(t *testing.T, env *common.TestEnv, prompt string) (string, error) {
+// getEnv returns the shared test environment.
+func getEnv(t *testing.T) *common.TestEnv {
 	t.Helper()
-
-	// Configure MCP server using claude mcp add
-	mcpURL := env.BaseURL + "/mcp/v1"
-
-	// Remove any existing config and add fresh one
-	exec.Command("claude", "mcp", "remove", "iter").Run()
-	addCmd := exec.Command("claude", "mcp", "add", "--transport", "http", "iter", mcpURL)
-	addOutput, addErr := addCmd.CombinedOutput()
-	if addErr != nil {
-		env.Log("Warning: MCP add command: %v, output: %s", addErr, string(addOutput))
+	env := testSetup.Env()
+	if env == nil {
+		t.Fatal("Test environment not initialized")
 	}
+	env.T = t
+	return env
+}
 
-	// Verify MCP config
-	listCmd := exec.Command("claude", "mcp", "list")
-	listOutput, _ := listCmd.CombinedOutput()
-	env.Log("MCP servers: %s", strings.TrimSpace(string(listOutput)))
+// MCPRequest represents a JSON-RPC request for MCP.
+type MCPRequest struct {
+	JSONRPC string      `json:"jsonrpc"`
+	ID      int         `json:"id"`
+	Method  string      `json:"method"`
+	Params  interface{} `json:"params,omitempty"`
+}
 
-	// Run Claude with MCP
-	cmd := exec.Command("claude",
-		"-p", // Print mode (non-interactive)
-		"--dangerously-skip-permissions",
-		"--max-turns", "10",
-		"--output-format", "text",
-		prompt,
-	)
+// MCPResponse represents a JSON-RPC response from MCP.
+type MCPResponse struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      int             `json:"id"`
+	Result  json.RawMessage `json:"result,omitempty"`
+	Error   *MCPError       `json:"error,omitempty"`
+}
 
-	// Capture output
-	output, err := cmd.CombinedOutput()
-	outputStr := string(output)
+// MCPError represents a JSON-RPC error.
+type MCPError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
 
-	// Log the interaction
-	env.Log("Claude prompt: %s", prompt)
-	env.Log("Claude output: %s", outputStr)
-
+// sendMCPRequest sends a JSON-RPC request to the MCP endpoint.
+func sendMCPRequest(baseURL string, req *MCPRequest) (*MCPResponse, error) {
+	body, err := json.Marshal(req)
 	if err != nil {
-		return outputStr, fmt.Errorf("claude command failed: %w\nOutput: %s", err, outputStr)
+		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	return outputStr, nil
+	resp, err := http.Post(baseURL+"/mcp/v1", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("post request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+
+	var mcpResp MCPResponse
+	if err := json.Unmarshal(respBody, &mcpResp); err != nil {
+		return nil, fmt.Errorf("unmarshal response: %w (body: %s)", err, string(respBody))
+	}
+
+	return &mcpResp, nil
 }
 
-// TestMCPListProjects tests listing projects via MCP.
-func TestMCPListProjects(t *testing.T) {
-	checkClaudeAuth(t)
-
-	env := common.NewTestEnv(t, "mcp", "list-projects")
-	defer env.Cleanup()
-
+// TestMCPInitialize tests the MCP initialize handshake.
+func TestMCPInitialize(t *testing.T) {
+	env := getEnv(t)
 	startTime := time.Now()
 
-	if err := env.Start(); err != nil {
-		t.Fatalf("Failed to start service: %v", err)
+	// Test initialize
+	resp, err := sendMCPRequest(env.BaseURL, &MCPRequest{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "initialize",
+	})
+	if err != nil {
+		t.Fatalf("MCP initialize failed: %v", err)
 	}
 
-	// Register a test project first
+	if resp.Error != nil {
+		t.Fatalf("MCP initialize returned error: %d %s", resp.Error.Code, resp.Error.Message)
+	}
+
+	// Parse result
+	var initResult struct {
+		ProtocolVersion string `json:"protocolVersion"`
+		Capabilities    struct {
+			Tools interface{} `json:"tools"`
+		} `json:"capabilities"`
+		ServerInfo struct {
+			Name    string `json:"name"`
+			Version string `json:"version"`
+		} `json:"serverInfo"`
+	}
+	if err := json.Unmarshal(resp.Result, &initResult); err != nil {
+		t.Fatalf("Failed to parse initialize result: %v", err)
+	}
+
+	if initResult.ServerInfo.Name != "iter-service" {
+		t.Errorf("Expected server name 'iter-service', got '%s'", initResult.ServerInfo.Name)
+	}
+
+	env.SaveJSON("01-initialize.json", initResult)
+	env.Log("MCP initialized: %s v%s (protocol %s)",
+		initResult.ServerInfo.Name, initResult.ServerInfo.Version, initResult.ProtocolVersion)
+
+	duration := time.Since(startTime)
+	env.WriteSummary(true, duration, "MCP initialize protocol test passed")
+}
+
+// TestMCPToolsList tests listing available MCP tools.
+func TestMCPToolsList(t *testing.T) {
+	env := getEnv(t)
+	startTime := time.Now()
+
+	// First initialize
+	_, err := sendMCPRequest(env.BaseURL, &MCPRequest{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "initialize",
+	})
+	if err != nil {
+		t.Fatalf("MCP initialize failed: %v", err)
+	}
+
+	// List tools
+	resp, err := sendMCPRequest(env.BaseURL, &MCPRequest{
+		JSONRPC: "2.0",
+		ID:      2,
+		Method:  "tools/list",
+	})
+	if err != nil {
+		t.Fatalf("MCP tools/list failed: %v", err)
+	}
+
+	if resp.Error != nil {
+		t.Fatalf("MCP tools/list returned error: %d %s", resp.Error.Code, resp.Error.Message)
+	}
+
+	// Parse result
+	var toolsResult struct {
+		Tools []struct {
+			Name        string          `json:"name"`
+			Description string          `json:"description"`
+			InputSchema json.RawMessage `json:"inputSchema"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(resp.Result, &toolsResult); err != nil {
+		t.Fatalf("Failed to parse tools/list result: %v", err)
+	}
+
+	// Verify expected tools exist
+	expectedTools := []string{"list_projects", "search", "get_dependencies", "get_dependents"}
+	foundTools := make(map[string]bool)
+	for _, tool := range toolsResult.Tools {
+		foundTools[tool.Name] = true
+	}
+
+	for _, expected := range expectedTools {
+		if !foundTools[expected] {
+			t.Errorf("Expected tool '%s' not found in tools list", expected)
+		}
+	}
+
+	env.SaveJSON("02-tools-list.json", toolsResult)
+	env.Log("Found %d MCP tools", len(toolsResult.Tools))
+
+	duration := time.Since(startTime)
+	env.WriteSummary(true, duration, "MCP tools/list protocol test passed")
+}
+
+// TestMCPToolsCall tests calling MCP tools.
+func TestMCPToolsCall(t *testing.T) {
+	env := getEnv(t)
+	startTime := time.Now()
+
 	client := env.NewHTTPClient()
+
+	// Create and register a test project
 	projectPath, err := env.CreateTestProject("mcp-test-project")
 	if err != nil {
 		t.Fatalf("Failed to create test project: %v", err)
 	}
 
-	_, _, err = client.Post("/projects", map[string]string{"path": projectPath})
+	resp, body, err := client.Post("/projects", map[string]string{"path": projectPath})
 	if err != nil {
 		t.Fatalf("Failed to register project: %v", err)
 	}
+	common.AssertStatusCode(t, resp, http.StatusCreated)
+	created := common.AssertJSON(t, body)
+	projectID := created["id"].(string)
 
 	// Wait for indexing
 	time.Sleep(2 * time.Second)
 
-	// Ask Claude to list projects via MCP
-	output, err := runClaude(t, env, "Use the iter MCP tool to list all indexed projects. Just list the project names.")
+	// Test list_projects tool
+	mcpResp, err := sendMCPRequest(env.BaseURL, &MCPRequest{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "tools/call",
+		Params: map[string]interface{}{
+			"name":      "list_projects",
+			"arguments": map[string]interface{}{},
+		},
+	})
 	if err != nil {
-		t.Fatalf("Claude command failed: %v", err)
+		t.Fatalf("MCP tools/call list_projects failed: %v", err)
 	}
 
-	// Save output
-	env.SaveResult("claude-output.txt", []byte(output))
-
-	// Fail if Claude returned empty output
-	if strings.TrimSpace(output) == "" {
-		t.Fatal("Claude returned empty output - MCP integration not working")
+	if mcpResp.Error != nil {
+		t.Fatalf("MCP tools/call returned error: %d %s", mcpResp.Error.Code, mcpResp.Error.Message)
 	}
 
-	// Check if Claude says it doesn't have MCP access
-	outputLower := strings.ToLower(output)
-	if strings.Contains(outputLower, "don't have access") ||
-		strings.Contains(outputLower, "no mcp server") ||
-		strings.Contains(outputLower, "not configured") {
-		t.Fatalf("Claude reports no MCP access:\n%s", output)
+	// Parse tool result
+	var toolResult struct {
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+		IsError bool `json:"isError"`
+	}
+	if err := json.Unmarshal(mcpResp.Result, &toolResult); err != nil {
+		t.Fatalf("Failed to parse tools/call result: %v", err)
 	}
 
-	// Verify output mentions the project
-	if !strings.Contains(outputLower, "mcp-test-project") &&
-		!strings.Contains(outputLower, "project") {
-		t.Errorf("Output does not contain project info: %s", output)
+	if toolResult.IsError {
+		t.Errorf("list_projects returned error: %v", toolResult.Content)
 	}
+
+	if len(toolResult.Content) == 0 {
+		t.Error("list_projects returned empty content")
+	}
+
+	// Verify the project is in the result
+	if len(toolResult.Content) > 0 && !strings.Contains(toolResult.Content[0].Text, "mcp-test-project") {
+		t.Errorf("list_projects should contain 'mcp-test-project', got: %s", toolResult.Content[0].Text)
+	}
+
+	env.SaveJSON("03-list-projects-result.json", toolResult)
+	if len(toolResult.Content) > 0 {
+		env.Log("list_projects returned: %s", toolResult.Content[0].Text[:minInt(100, len(toolResult.Content[0].Text))])
+	}
+
+	// Test search tool
+	mcpResp, err = sendMCPRequest(env.BaseURL, &MCPRequest{
+		JSONRPC: "2.0",
+		ID:      2,
+		Method:  "tools/call",
+		Params: map[string]interface{}{
+			"name": "search",
+			"arguments": map[string]interface{}{
+				"query":      "HelloWorld",
+				"project_id": projectID,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("MCP tools/call search failed: %v", err)
+	}
+
+	if mcpResp.Error != nil {
+		t.Fatalf("MCP search returned error: %d %s", mcpResp.Error.Code, mcpResp.Error.Message)
+	}
+
+	if err := json.Unmarshal(mcpResp.Result, &toolResult); err != nil {
+		t.Fatalf("Failed to parse search result: %v", err)
+	}
+
+	env.SaveJSON("04-search-result.json", toolResult)
+	if len(toolResult.Content) > 0 {
+		env.Log("search returned: %s", toolResult.Content[0].Text[:minInt(100, len(toolResult.Content[0].Text))])
+	}
+
+	// Cleanup
+	client.Delete("/projects/" + projectID)
 
 	duration := time.Since(startTime)
-	env.WriteSummary(true, duration, "MCP list projects test completed")
+	env.WriteSummary(true, duration, "MCP tools/call protocol test passed")
 }
 
-// TestMCPSearch tests searching via MCP.
-func TestMCPSearch(t *testing.T) {
-	checkClaudeAuth(t)
-
-	env := common.NewTestEnv(t, "mcp", "search")
-	defer env.Cleanup()
-
+// TestMCPSSEEndpoint tests the SSE endpoint for MCP.
+func TestMCPSSEEndpoint(t *testing.T) {
+	env := getEnv(t)
 	startTime := time.Now()
 
-	if err := env.Start(); err != nil {
-		t.Fatalf("Failed to start service: %v", err)
-	}
-
-	// Create and register a test project with known symbols
-	client := env.NewHTTPClient()
-	projectPath, err := env.CreateTestProject("search-test")
+	// Make GET request to SSE endpoint
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(env.BaseURL + "/mcp/sse")
 	if err != nil {
-		t.Fatalf("Failed to create test project: %v", err)
-	}
-
-	resp, _, err := client.Post("/projects", map[string]string{"path": projectPath})
-	if err != nil {
-		t.Fatalf("Failed to register project: %v", err)
-	}
-	common.AssertStatusCode(t, resp, 201)
-
-	// Rebuild index
-	resp, _, err = client.Post("/projects/"+projectPath+"/index", nil)
-	if err != nil {
-		// Project ID might be different, try listing
-		resp, body, _ := client.Get("/projects")
-		if resp.StatusCode == 200 {
-			projects := common.AssertJSONArray(t, body)
-			if len(projects) > 0 {
-				if id, ok := projects[0]["id"].(string); ok {
-					client.Post("/projects/"+id+"/index", nil)
-				}
-			}
+		// Timeout is expected for SSE - we just want to see if it starts correctly
+		if !strings.Contains(err.Error(), "timeout") {
+			t.Fatalf("SSE GET failed unexpectedly: %v", err)
 		}
 	}
+	if resp != nil {
+		defer resp.Body.Close()
 
-	// Wait for indexing
-	time.Sleep(3 * time.Second)
+		// Read some of the response
+		buf := make([]byte, 1024)
+		n, _ := resp.Body.Read(buf)
+		responseStart := string(buf[:n])
 
-	// Ask Claude to search for HelloWorld function
-	output, err := runClaude(t, env,
-		"Use the iter MCP search tool to find the 'HelloWorld' function. "+
-			"Tell me the file path and line number where it's defined.")
-	if err != nil {
-		t.Fatalf("Claude command failed: %v", err)
-	}
+		// Verify it looks like SSE with endpoint event
+		if !strings.Contains(responseStart, "event: endpoint") {
+			t.Errorf("Expected 'event: endpoint' in SSE response, got: %s", responseStart)
+		}
 
-	env.SaveResult("claude-output.txt", []byte(output))
+		if !strings.Contains(responseStart, "data: http") {
+			t.Errorf("Expected endpoint URL in SSE response, got: %s", responseStart)
+		}
 
-	// Fail if Claude returned empty output
-	if strings.TrimSpace(output) == "" {
-		t.Fatal("Claude returned empty output - MCP integration not working")
-	}
-
-	// Check if Claude says it doesn't have MCP access
-	outputLower := strings.ToLower(output)
-	if strings.Contains(outputLower, "don't have access") ||
-		strings.Contains(outputLower, "no mcp server") ||
-		strings.Contains(outputLower, "not configured") {
-		t.Fatalf("Claude reports no MCP access:\n%s", output)
-	}
-
-	// Check if output mentions main.go or HelloWorld
-	if !strings.Contains(outputLower, "main.go") && !strings.Contains(outputLower, "helloworld") {
-		t.Errorf("Output does not contain expected search result: %s", output)
+		env.SaveResult("05-sse-response.txt", []byte(responseStart))
+		env.Log("SSE endpoint event received: %s", strings.TrimSpace(responseStart))
 	}
 
 	duration := time.Since(startTime)
-	env.WriteSummary(true, duration, "MCP search test completed")
+	env.WriteSummary(true, duration, "MCP SSE endpoint test passed")
 }
 
-// TestMCPGetDependencies tests getting symbol dependencies via MCP.
-func TestMCPGetDependencies(t *testing.T) {
-	checkClaudeAuth(t)
-
-	env := common.NewTestEnv(t, "mcp", "dependencies")
-	defer env.Cleanup()
-
+// TestMCPProjectRegistration tests the complete project lifecycle via MCP.
+func TestMCPProjectRegistration(t *testing.T) {
+	env := getEnv(t)
 	startTime := time.Now()
 
-	if err := env.Start(); err != nil {
-		t.Fatalf("Failed to start service: %v", err)
-	}
-
-	// Create and register a test project
 	client := env.NewHTTPClient()
-	projectPath, err := env.CreateTestProject("deps-test")
+
+	// Create test project
+	projectPath, err := env.CreateTestProject("mcp-lifecycle-project")
 	if err != nil {
 		t.Fatalf("Failed to create test project: %v", err)
 	}
 
-	_, _, err = client.Post("/projects", map[string]string{"path": projectPath})
+	// Register via REST API
+	resp, body, err := client.Post("/projects", map[string]string{"path": projectPath})
 	if err != nil {
 		t.Fatalf("Failed to register project: %v", err)
 	}
+	common.AssertStatusCode(t, resp, http.StatusCreated)
+	created := common.AssertJSON(t, body)
+	projectID := created["id"].(string)
+
+	env.SaveJSON("06-project-registered.json", created)
+
+	// Index the project
+	resp, _, err = client.Post("/projects/"+projectID+"/index", nil)
+	if err != nil {
+		t.Fatalf("Failed to index project: %v", err)
+	}
+	common.AssertStatusCode(t, resp, http.StatusOK)
 
 	// Wait for indexing
-	time.Sleep(3 * time.Second)
+	time.Sleep(2 * time.Second)
 
-	// Ask Claude about dependencies
-	output, err := runClaude(t, env,
-		"Use the iter MCP tools to find what the 'main' function depends on in this project.")
+	// Verify via MCP list_projects
+	mcpResp, err := sendMCPRequest(env.BaseURL, &MCPRequest{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "tools/call",
+		Params: map[string]interface{}{
+			"name":      "list_projects",
+			"arguments": map[string]interface{}{},
+		},
+	})
 	if err != nil {
-		t.Fatalf("Claude command failed: %v", err)
+		t.Fatalf("MCP list_projects failed: %v", err)
 	}
 
-	env.SaveResult("claude-output.txt", []byte(output))
+	var toolResult struct {
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	json.Unmarshal(mcpResp.Result, &toolResult)
 
-	// Fail if Claude returned empty output
-	if strings.TrimSpace(output) == "" {
-		t.Fatal("Claude returned empty output - MCP integration not working")
+	if len(toolResult.Content) > 0 && !strings.Contains(toolResult.Content[0].Text, "mcp-lifecycle-project") {
+		t.Errorf("Project not found in MCP list_projects: %s", toolResult.Content[0].Text)
 	}
 
-	// Check if Claude says it doesn't have MCP access
-	outputLower := strings.ToLower(output)
-	if strings.Contains(outputLower, "don't have access") ||
-		strings.Contains(outputLower, "no mcp server") ||
-		strings.Contains(outputLower, "not configured") {
-		t.Fatalf("Claude reports no MCP access:\n%s", output)
-	}
+	env.SaveJSON("07-mcp-list-after-register.json", toolResult)
+
+	// Cleanup
+	client.Delete("/projects/" + projectID)
 
 	duration := time.Since(startTime)
-	env.WriteSummary(true, duration, "MCP dependencies test completed")
+	env.WriteSummary(true, duration, "MCP project lifecycle test passed")
 }
 
-// TestMCPComplexQuery tests a complex multi-step query via MCP.
-func TestMCPComplexQuery(t *testing.T) {
-	checkClaudeAuth(t)
-
-	env := common.NewTestEnv(t, "mcp", "complex-query")
-	defer env.Cleanup()
-
-	startTime := time.Now()
-
-	if err := env.Start(); err != nil {
-		t.Fatalf("Failed to start service: %v", err)
-	}
-
-	// Create project with more complex code
-	projectPath := filepath.Join(env.DataDir, "test-projects", "complex")
-	if err := os.MkdirAll(projectPath, 0755); err != nil {
-		t.Fatalf("Failed to create project dir: %v", err)
-	}
-
-	// Write multiple files
-	mainGo := `package main
-
-import "fmt"
-
-type Calculator struct {
-	lastResult int
-}
-
-func (c *Calculator) Add(a, b int) int {
-	c.lastResult = a + b
-	return c.lastResult
-}
-
-func (c *Calculator) Multiply(a, b int) int {
-	c.lastResult = a * b
-	return c.lastResult
-}
-
-func (c *Calculator) GetLastResult() int {
-	return c.lastResult
-}
-
-func main() {
-	calc := &Calculator{}
-	fmt.Println(calc.Add(5, 3))
-	fmt.Println(calc.Multiply(4, 2))
-}
-`
-	if err := os.WriteFile(filepath.Join(projectPath, "main.go"), []byte(mainGo), 0644); err != nil {
-		t.Fatalf("Failed to write main.go: %v", err)
-	}
-
-	utilsGo := `package main
-
-// FormatNumber formats a number with commas
-func FormatNumber(n int) string {
-	if n < 1000 {
-		return fmt.Sprintf("%d", n)
-	}
-	return fmt.Sprintf("%d,%03d", n/1000, n%1000)
-}
-
-// Max returns the larger of two integers
-func Max(a, b int) int {
-	if a > b {
+func minInt(a, b int) int {
+	if a < b {
 		return a
 	}
 	return b
-}
-`
-	if err := os.WriteFile(filepath.Join(projectPath, "utils.go"), []byte(utilsGo), 0644); err != nil {
-		t.Fatalf("Failed to write utils.go: %v", err)
-	}
-
-	goMod := "module complex\n\ngo 1.21\n"
-	if err := os.WriteFile(filepath.Join(projectPath, "go.mod"), []byte(goMod), 0644); err != nil {
-		t.Fatalf("Failed to write go.mod: %v", err)
-	}
-
-	// Register project
-	client := env.NewHTTPClient()
-	_, _, err := client.Post("/projects", map[string]string{"path": projectPath})
-	if err != nil {
-		t.Fatalf("Failed to register project: %v", err)
-	}
-
-	// Wait for indexing
-	time.Sleep(3 * time.Second)
-
-	// Complex query
-	output, err := runClaude(t, env,
-		"Using the iter MCP tools, analyze this project. "+
-			"Find all types and their methods, and list the utility functions. "+
-			"Give a brief summary of what the code does.")
-	if err != nil {
-		t.Fatalf("Claude command failed: %v", err)
-	}
-
-	env.SaveResult("claude-output.txt", []byte(output))
-
-	// Fail if Claude returned empty output
-	if strings.TrimSpace(output) == "" {
-		t.Fatal("Claude returned empty output - MCP integration not working")
-	}
-
-	// Check if Claude says it doesn't have MCP access
-	outputLower := strings.ToLower(output)
-	if strings.Contains(outputLower, "don't have access") ||
-		strings.Contains(outputLower, "no mcp server") ||
-		strings.Contains(outputLower, "not configured") {
-		t.Fatalf("Claude reports no MCP access:\n%s", output)
-	}
-
-	// Check if output mentions Calculator or methods
-	if !strings.Contains(outputLower, "calculator") && !strings.Contains(outputLower, "add") {
-		t.Errorf("Output does not contain expected analysis: %s", output)
-	}
-
-	duration := time.Since(startTime)
-	env.WriteSummary(true, duration, "MCP complex query test completed")
-}
-
-// TestMCPToolDiscovery tests that MCP tools are discoverable.
-func TestMCPToolDiscovery(t *testing.T) {
-	checkClaudeAuth(t)
-
-	env := common.NewTestEnv(t, "mcp", "tool-discovery")
-	defer env.Cleanup()
-
-	startTime := time.Now()
-
-	if err := env.Start(); err != nil {
-		t.Fatalf("Failed to start service: %v", err)
-	}
-
-	// Ask Claude what iter MCP tools are available
-	output, err := runClaude(t, env,
-		"What MCP tools are available from the 'iter' server? List them briefly.")
-	if err != nil {
-		t.Fatalf("Claude command failed: %v", err)
-	}
-
-	env.SaveResult("claude-output.txt", []byte(output))
-
-	// Fail if Claude returned empty output
-	if strings.TrimSpace(output) == "" {
-		t.Fatal("Claude returned empty output - MCP integration not working")
-	}
-
-	// Check if Claude says it doesn't have MCP access
-	outputLower := strings.ToLower(output)
-	if strings.Contains(outputLower, "don't have access") ||
-		strings.Contains(outputLower, "no mcp server") ||
-		strings.Contains(outputLower, "not configured") {
-		t.Fatalf("Claude reports no MCP access:\n%s", output)
-	}
-
-	// Check if output mentions some expected tools
-	hasToolInfo := strings.Contains(outputLower, "search") ||
-		strings.Contains(outputLower, "project") ||
-		strings.Contains(outputLower, "symbol") ||
-		strings.Contains(outputLower, "iter") ||
-		strings.Contains(outputLower, "list")
-
-	if !hasToolInfo {
-		t.Errorf("Output does not contain tool information: %s", output)
-	}
-
-	duration := time.Since(startTime)
-	env.WriteSummary(true, duration, "MCP tool discovery test completed")
 }
