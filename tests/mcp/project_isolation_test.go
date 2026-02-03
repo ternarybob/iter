@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chromedp/chromedp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/ternarybob/iter/tests/common"
@@ -46,14 +47,15 @@ func requireDockerMode(t *testing.T) {
 
 // E2EEnv holds the end-to-end test environment.
 type E2EEnv struct {
-	t          *testing.T
-	ctx        context.Context
-	cancel     context.CancelFunc
-	network    *testcontainers.DockerNetwork
-	iter       testcontainers.Container
-	claude     testcontainers.Container
-	resultsDir string
-	projectIDs map[string]string // project name -> project ID
+	t           *testing.T
+	ctx         context.Context
+	cancel      context.CancelFunc
+	network     *testcontainers.DockerNetwork
+	iter        testcontainers.Container
+	claude      testcontainers.Container
+	resultsDir  string
+	projectIDs  map[string]string // project name -> project ID
+	externalURL string            // externally accessible URL for iter container
 }
 
 // NewE2EEnv creates a new E2E test environment.
@@ -113,7 +115,19 @@ func (e *E2EEnv) StartIter() error {
 	}
 
 	e.iter = container
-	e.t.Log("iter-service container started")
+
+	// Get mapped port for external access (screenshots from host)
+	mappedPort, err := container.MappedPort(e.ctx, "19000/tcp")
+	if err != nil {
+		return fmt.Errorf("get mapped port: %w", err)
+	}
+	host, err := container.Host(e.ctx)
+	if err != nil {
+		return fmt.Errorf("get container host: %w", err)
+	}
+	e.externalURL = fmt.Sprintf("http://%s:%s", host, mappedPort.Port())
+
+	e.t.Logf("iter-service container started (external: %s)", e.externalURL)
 	return nil
 }
 
@@ -172,11 +186,16 @@ func (e *E2EEnv) CopyCredentials() error {
 	return nil
 }
 
-// ConfigureMCP adds the iter MCP server to Claude.
+// ConfigureMCP adds the iter MCP server to Claude with user scope.
+// User scope makes the MCP server available to all projects, regardless of
+// which directory Claude runs from.
 func (e *E2EEnv) ConfigureMCP() error {
-	e.Exec("claude", "mcp", "remove", "iter")
+	// Remove any existing configuration (from any scope)
+	e.Exec("claude", "mcp", "remove", "--scope", "user", "iter")
+	e.Exec("claude", "mcp", "remove", "--scope", "local", "iter")
 
-	exitCode, output, err := e.Exec("claude", "mcp", "add", "--transport", "http", "iter", "http://iter:19000/mcp/v1")
+	// Add with user scope so it's available from any directory
+	exitCode, output, err := e.Exec("claude", "mcp", "add", "--scope", "user", "--transport", "http", "iter", "http://iter:19000/mcp/v1")
 	if err != nil {
 		return fmt.Errorf("add MCP server: %w", err)
 	}
@@ -544,6 +563,9 @@ func (e *E2EEnv) writeSummaryMarkdown(summary TestSummary) error {
 
 // Cleanup stops containers and releases resources.
 func (e *E2EEnv) Cleanup() {
+	// Collect container logs before terminating
+	e.CollectContainerLogs()
+
 	if e.claude != nil {
 		e.claude.Terminate(e.ctx)
 	}
@@ -555,6 +577,159 @@ func (e *E2EEnv) Cleanup() {
 	}
 	if e.cancel != nil {
 		e.cancel()
+	}
+}
+
+// CollectContainerLogs collects logs from all containers and saves them to the results directory.
+func (e *E2EEnv) CollectContainerLogs() {
+	// Collect iter-service logs
+	if e.iter != nil {
+		logs, err := e.iter.Logs(e.ctx)
+		if err == nil {
+			data, _ := io.ReadAll(logs)
+			logs.Close()
+			if len(data) > 0 {
+				e.SaveResult("iter-service.log", string(data))
+				e.t.Log("Collected iter-service logs")
+			}
+		}
+	}
+
+	// Collect claude container logs
+	if e.claude != nil {
+		logs, err := e.claude.Logs(e.ctx)
+		if err == nil {
+			data, _ := io.ReadAll(logs)
+			logs.Close()
+			if len(data) > 0 {
+				e.SaveResult("container.log", string(data))
+				e.t.Log("Collected claude container logs")
+			}
+		}
+	}
+}
+
+// E2EBrowser provides chromedp-based browser automation for E2E tests.
+type E2EBrowser struct {
+	env         *E2EEnv
+	ctx         context.Context
+	cancel      context.CancelFunc
+	allocCtx    context.Context
+	allocCancel context.CancelFunc
+}
+
+// NewBrowser creates a new headless Chrome browser for UI testing.
+// The browser connects to the iter container via its externally mapped port.
+func (e *E2EEnv) NewBrowser() (*E2EBrowser, error) {
+	if e.externalURL == "" {
+		return nil, fmt.Errorf("iter container not started or external URL not available")
+	}
+
+	// Create allocator context with headless options
+	opts := append(chromedp.DefaultExecAllocatorOptions[:],
+		chromedp.Flag("headless", true),
+		chromedp.Flag("disable-gpu", true),
+		chromedp.Flag("no-sandbox", true),
+		chromedp.Flag("disable-dev-shm-usage", true),
+		chromedp.WindowSize(1280, 800),
+	)
+
+	allocCtx, allocCancel := chromedp.NewExecAllocator(context.Background(), opts...)
+	ctx, cancel := chromedp.NewContext(allocCtx)
+
+	// Set timeout for browser operations
+	ctx, cancel = context.WithTimeout(ctx, 60*time.Second)
+
+	return &E2EBrowser{
+		env:         e,
+		ctx:         ctx,
+		cancel:      cancel,
+		allocCtx:    allocCtx,
+		allocCancel: allocCancel,
+	}, nil
+}
+
+// Close closes the browser.
+func (b *E2EBrowser) Close() {
+	if b.cancel != nil {
+		b.cancel()
+	}
+	if b.allocCancel != nil {
+		b.allocCancel()
+	}
+}
+
+// Screenshot captures a screenshot of the current page state.
+// name should be like "01-before" or "02-after" (without extension).
+func (b *E2EBrowser) Screenshot(name string) error {
+	var buf []byte
+	if err := chromedp.Run(b.ctx,
+		chromedp.CaptureScreenshot(&buf),
+	); err != nil {
+		return fmt.Errorf("capture screenshot: %w", err)
+	}
+
+	path := filepath.Join(b.env.resultsDir, name+".png")
+	if err := os.WriteFile(path, buf, 0644); err != nil {
+		return fmt.Errorf("write screenshot: %w", err)
+	}
+
+	b.env.t.Logf("Screenshot saved: %s", name+".png")
+	return nil
+}
+
+// FullPageScreenshot captures a full-page screenshot.
+func (b *E2EBrowser) FullPageScreenshot(name string) error {
+	var buf []byte
+	if err := chromedp.Run(b.ctx,
+		chromedp.FullScreenshot(&buf, 100),
+	); err != nil {
+		return fmt.Errorf("capture full screenshot: %w", err)
+	}
+
+	path := filepath.Join(b.env.resultsDir, name+".png")
+	if err := os.WriteFile(path, buf, 0644); err != nil {
+		return fmt.Errorf("write screenshot: %w", err)
+	}
+
+	b.env.t.Logf("Full screenshot saved: %s", name+".png")
+	return nil
+}
+
+// Navigate navigates to a URL path (relative to the external URL).
+func (b *E2EBrowser) Navigate(path string) error {
+	url := b.env.externalURL + path
+	b.env.t.Logf("Navigating to: %s", url)
+
+	if err := chromedp.Run(b.ctx,
+		chromedp.Navigate(url),
+		chromedp.WaitReady("body"),
+	); err != nil {
+		return fmt.Errorf("navigate to %s: %w", path, err)
+	}
+
+	return nil
+}
+
+// NavigateAndScreenshot navigates to a path and captures a screenshot.
+func (b *E2EBrowser) NavigateAndScreenshot(path, screenshotName string) error {
+	if err := b.Navigate(path); err != nil {
+		return err
+	}
+	return b.FullPageScreenshot(screenshotName)
+}
+
+// RequireScreenshots fails the test if required screenshots are missing.
+func (e *E2EEnv) RequireScreenshots(required []string) {
+	var missing []string
+	for _, name := range required {
+		path := filepath.Join(e.resultsDir, name+".png")
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		e.t.Errorf("Missing required screenshots: %v", missing)
 	}
 }
 
@@ -588,7 +763,25 @@ func TestProjectIsolation(t *testing.T) {
 	env, err := NewE2EEnv(t, "TestProjectIsolation")
 	require.NoError(t, err, "Failed to create E2E environment")
 	defer env.Cleanup()
+
+	// Track browser for cleanup
+	var browser *E2EBrowser
 	defer func() {
+		// Capture after screenshot before cleanup
+		if browser != nil {
+			t.Log("Capturing after screenshot...")
+			if err := browser.NavigateAndScreenshot("/web/", "02-after"); err != nil {
+				t.Logf("Warning: Failed to capture after screenshot: %v", err)
+			}
+			browser.Close()
+		}
+
+		// Verify screenshots
+		env.RequireScreenshots([]string{"01-before", "02-after"})
+
+		// Collect container logs BEFORE writing summary so they appear in the summary
+		env.CollectContainerLogs()
+
 		// Write test summary at the end
 		duration := time.Since(startTime)
 		env.WriteSummary(t.Failed() == false, duration, "MCP project isolation test - validates project-specific data filtering")
@@ -601,11 +794,19 @@ func TestProjectIsolation(t *testing.T) {
 	t.Log("Starting Claude container...")
 	require.NoError(t, env.StartClaude(), "Failed to start Claude")
 
-	// Step 2: Copy test projects to iter container
+	// Step 2: Create browser and capture before screenshot
+	t.Log("Creating browser for screenshots...")
+	browser, err = env.NewBrowser()
+	require.NoError(t, err, "Failed to create browser")
+
+	t.Log("Capturing before screenshot (initial state)...")
+	require.NoError(t, browser.NavigateAndScreenshot("/web/", "01-before"), "Failed to capture before screenshot")
+
+	// Step 3: Copy test projects to iter container
 	t.Log("Copying test projects to iter container...")
 	require.NoError(t, env.CopyTestProjects(), "Failed to copy test projects")
 
-	// Step 3: Register and index projects
+	// Step 4: Register and index projects
 	t.Log("Registering project-alpha...")
 	alphaID, err := env.RegisterProject("project-alpha", "/data/projects/project-alpha")
 	require.NoError(t, err, "Failed to register project-alpha")
@@ -625,7 +826,7 @@ func TestProjectIsolation(t *testing.T) {
 	// Allow indexing to complete
 	time.Sleep(2 * time.Second)
 
-	// Step 4: Verify projects are listed
+	// Step 5: Verify projects are listed
 	t.Run("ListProjects", func(t *testing.T) {
 		output, err := env.MCPListProjects()
 		require.NoError(t, err, "Failed to list projects")
@@ -636,7 +837,7 @@ func TestProjectIsolation(t *testing.T) {
 		t.Logf("Listed projects: %s", output)
 	})
 
-	// Step 5: Test project isolation - Alpha specific search
+	// Step 6: Test project isolation - Alpha specific search
 	t.Run("SearchAlphaOnly", func(t *testing.T) {
 		// Search for Alpha-specific symbol within Alpha project
 		output, err := env.MCPSearch("AlphaGreeter", alphaID)
@@ -653,7 +854,7 @@ func TestProjectIsolation(t *testing.T) {
 		t.Logf("Alpha search result: %s", output)
 	})
 
-	// Step 6: Test project isolation - Beta specific search
+	// Step 7: Test project isolation - Beta specific search
 	t.Run("SearchBetaOnly", func(t *testing.T) {
 		// Search for Beta-specific symbol within Beta project
 		output, err := env.MCPSearch("BetaCalculator", betaID)
@@ -670,7 +871,7 @@ func TestProjectIsolation(t *testing.T) {
 		t.Logf("Beta search result: %s", output)
 	})
 
-	// Step 7: Verify Alpha-specific symbols
+	// Step 8: Verify Alpha-specific symbols
 	t.Run("AlphaSymbolsExist", func(t *testing.T) {
 		symbols := []string{"NewAlphaGreeter", "Greet", "GreetMultiple", "AlphaConfig", "FormatGreeting"}
 		for _, sym := range symbols {
@@ -681,7 +882,7 @@ func TestProjectIsolation(t *testing.T) {
 		}
 	})
 
-	// Step 8: Verify Beta-specific symbols
+	// Step 9: Verify Beta-specific symbols
 	t.Run("BetaSymbolsExist", func(t *testing.T) {
 		symbols := []string{"NewBetaCalculator", "Add", "Multiply", "SquareRoot", "ComputeAverage"}
 		for _, sym := range symbols {
@@ -692,7 +893,7 @@ func TestProjectIsolation(t *testing.T) {
 		}
 	})
 
-	// Step 9: Cross-project isolation verification
+	// Step 10: Cross-project isolation verification
 	t.Run("CrossProjectIsolation", func(t *testing.T) {
 		// Search for Alpha symbol in Beta project - should NOT find it
 		output, err := env.MCPSearch("AlphaGreeter", betaID)
@@ -713,7 +914,7 @@ func TestProjectIsolation(t *testing.T) {
 			"BetaCalculator should NOT appear when searching project-alpha")
 	})
 
-	// Step 10: Global search finds both
+	// Step 11: Global search finds both
 	t.Run("GlobalSearchFindsBoth", func(t *testing.T) {
 		// Search without project_id should find symbols from both projects
 		output, err := env.MCPSearch("New", "")
